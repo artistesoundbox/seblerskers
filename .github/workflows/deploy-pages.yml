@@ -39,8 +39,10 @@ jobs:
           curl -sSfL -o templates.tpz "${BASE}/Godot_v${V}_export_templates.tpz"
           mkdir -p ~/.local/share/godot/export_templates
           unzip -q templates.tpz -d ~/.local/share/godot/export_templates
+          # Godot looks the folder up by its DOTTED version string
+          # (4.7.1.stable), not the release tag (4.7.1-stable).
           mv ~/.local/share/godot/export_templates/templates \
-             ~/.local/share/godot/export_templates/${V}
+             ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
 
       - name: Import project resources
         run: godot --headless --path . --import
