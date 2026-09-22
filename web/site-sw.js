@@ -21,7 +21,7 @@
  */
 
 const CACHE = "seb-pack-v1";
-const VERSION = "2026-09-22.1";
+const VERSION = "2026-09-22.2"; // engine-set purge on activate + pinned revalidate
 
 /* this folder's engine files */
 const ENGINE = /\/seblerskers\/(index\.js|index\.wasm|index\.side\.wasm|index\.audio\.worklet\.js|index\.audio\.position\.worklet\.js|libterrain\.web\.release\.wasm32\.wasm|site-shell-cover(-small)?\.jpg)$/;
@@ -37,6 +37,20 @@ self.addEventListener("activate", function (event) {
     const names = await caches.keys();
     await Promise.all(names.filter(function (n) { return n !== CACHE; })
       .map(function (n) { return caches.delete(n); }));
+    // Purge engine files + covers but KEEP pack chunks: the engine set must
+    // always move as one generation (a new index.js next to an old cached
+    // index.wasm/side.wasm is a frankenbuild that boots nothing and then
+    // blocks its own repair — every doomed boot killed the background
+    // revalidation mid-download). Chunks are size-keyed and re-verified by
+    // the loader every visit, so they are always safe to keep.
+    try {
+      const cache = await caches.open(CACHE);
+      const keys = await cache.keys();
+      await Promise.all(keys.filter(function (k) {
+        return ENGINE.test(new URL(k.url).pathname) ||
+          /\/site-shell-cover(-small)?\.jpg$/.test(new URL(k.url).pathname);
+      }).map(function (k) { return cache.delete(k); }));
+    } catch (e) { /* best effort */ }
     await self.clients.claim();
   })());
 });
@@ -63,9 +77,11 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  // engine files: cache-first + background size revalidate
+  // engine files: cache-first + background size revalidate. The revalidate
+  // is pinned with waitUntil so a page that dies mid-boot cannot kill it —
+  // an unpinned revalidation is how stale engine binaries survived here.
   if (url.origin === self.location.origin && ENGINE.test(url.pathname)) {
-    event.respondWith(cacheFirst(req, false));
+    event.respondWith(cacheFirstEngine(req, event));
     return;
   }
   // everything else (CDN HEAD requests, gtag, the portal itself): native
@@ -85,12 +101,19 @@ async function networkFirst(req) {
 }
 
 async function cacheFirst(req, isPack) {
+  return cacheFirstEngine(req, null, isPack);
+}
+
+async function cacheFirstEngine(req, event, isPack) {
   const cache = await caches.open(CACHE);
   let cached = null;
   try { cached = await cache.match(req, { ignoreSearch: false }); } catch (e) { }
 
   if (cached) {
-    if (!isPack) revalidateEngine(req, cache); // background, non-blocking
+    if (isPack === false || isPack === undefined) {
+      const p = revalidateEngine(req, cache);
+      if (event) event.waitUntil(p); // outlive the page that triggered us
+    }
     return cached;
   }
 
