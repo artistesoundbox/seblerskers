@@ -304,33 +304,38 @@ const GODOT_THREADS_ENABLED = false;
     }).catch(function () { return []; });
   }
 
+  /* Stage 1: get every chunk of the pack into the browser's Cache (the
+     service worker stores them). This stage holds NO big buffer \u2014 peak
+     memory stays at a few MB. Stage 2 is the ENGINE's stock loader: it
+     fetches same-origin "index.pck", the service worker assembles the
+     response from the cached chunks (site-sw.js), and the engine runs
+     exactly the code path it was built for. */
   function downloadPack(onProgress) {
     return fetch(CDN_BASE, { method: "HEAD", cache: "no-store" })
       .then(function (head) {
         var size = Number(head.headers.get("Content-Length"));
         if (!head.ok || !size || head.headers.get("Accept-Ranges") !== "bytes") {
-          return null; // fall back to the engine's own loader
+          return -1; // no chunked path: engine loads the CDN URL directly
         }
         var chunks = Math.ceil(size / CHUNK);
         return sweepCache(size).then(function (haveList) {
           var have = {};
-          haveList.forEach(function (i) { if (i < chunks) have[i] = true; });
-          var missing = chunks - haveList.length;
-          if (missing === 0) {
+          var doneCount = 0;
+          haveList.forEach(function (i) {
+            if (i >= 0 && i < chunks) { have[i] = true; doneCount++; }
+          });
+          var missing = chunks - doneCount;
+          if (doneCount === chunks) {
             status.textContent = "cached copy found \u2014 unloading the cargo\u2026";
-          } else if (haveList.length) {
-            status.textContent = "resuming \u2014 " + haveList.length + " of " +
+          } else if (doneCount) {
+            status.textContent = "resuming \u2014 " + doneCount + " of " +
               chunks + " parts cached\u2026";
           }
-          if (missing === 0 && !navigator.onLine) {
-            // fully cached pack works offline
-          } else if (!navigator.onLine && missing > 0) {
-            return Promise.reject(new Error("offline and the full pack isn't cached yet (" +
-              haveList.length + " of " + chunks + " parts) \u2014 reconnect once to finish caching it"));
+          onProgress(Math.min(doneCount * CHUNK, size), size);
+          if (!navigator.onLine && missing > 0) {
+            throw new Error("offline and the full pack isn't cached yet (" +
+              doneCount + " of " + chunks + " parts) \u2014 reconnect once to finish caching it");
           }
-          // ONE preallocated pack buffer; chunks write straight into it
-          var out = new Uint8Array(size);
-          var done = 0;
           var next = 0;
           var claimedAll = false;
           function claim() {            // -1 once every chunk is taken
@@ -338,57 +343,34 @@ const GODOT_THREADS_ENABLED = false;
             return next++;
           }
           var workers = new Array(Math.min(4, chunks));
-          function store(idx, buf) {
-            out.set(new Uint8Array(buf), idx * CHUNK); // buf drops after this
-            done += buf.byteLength;
-            onProgress(done, size);
+          function cacheChunk(idx) {
+            var begin = idx * CHUNK;
+            var end = Math.min(size, (idx + 1) * CHUNK);
+            return fetchChunk(chunkKey(size, idx), begin, end, 3).then(function (buf) {
+              return openCache().then(function (c) {
+                if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
+                doneCount++;
+                onProgress(Math.min(doneCount * CHUNK, size), size);
+              });
+            });
           }
           function run() {
             var idx = claim();
             if (idx < 0) return Promise.resolve();
-            var begin = idx * CHUNK;
-            var end = Math.min(size, (idx + 1) * CHUNK);
-            var deliver;
-            if (have[idx]) {
-              deliver = openCache().then(function (c) {
-                return c.match(chunkKey(size, idx)).then(function (r) {
-                  if (!r) throw new Error("cache evicted chunk " + idx);
-                  return r.arrayBuffer();
-                });
-              }).catch(function () {
-                // evicted between sweep and read: fetch and re-cache it
-                return fetchChunk(chunkKey(size, idx), begin, end, 3).then(function (buf) {
-                  openCache().then(function (c) {
-                    if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
-                  });
-                  return buf;
-                });
-              });
-            } else {
-              deliver = fetchChunk(chunkKey(size, idx), begin, end, 3).then(function (buf) {
-                openCache().then(function (c) {
-                  if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
-                });
-                return buf;
-              });
-            }
-            return deliver.then(function (buf) {
-              store(idx, buf);
-              return run();
-            });
+            if (have[idx]) return run(); // already in the cache
+            return cacheChunk(idx).then(run);
           }
           for (var w = 0; w < workers.length; w++) workers[w] = run();
           return Promise.all(workers).then(function () {
-            if (done !== size) throw new Error("pack incomplete: " + done + " of " + size);
-            return out.buffer;
+            onProgress(size, size);
+            return size;
           });
         });
       })
       .catch(function (err) {
         if (err && err.message && err.message.indexOf("offline") === 0) throw err;
-        // Chunked load failed mid-flight (network died, CDN 5xx...). Do NOT
-        // fall back to the engine's own loader here: that would silently
-        // re-download the whole 500 MB pack over the user's head. Surface it.
+        // Chunked caching failed mid-flight (network died, CDN 5xx...).
+        // Surface it \u2014 never fall back to a silent 500 MB re-download.
         throw err || new Error("chunked pack load failed");
       });
   }
@@ -397,20 +379,18 @@ const GODOT_THREADS_ENABLED = false;
     btn.disabled = true;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
-    downloadPack(setBar).then(function (pack) {
+    downloadPack(setBar).then(function (size) {
       status.textContent = "raising the sails \u2014 starting the engine\u2026";
       var begun = function () { veil.classList.add("hidden");
         document.getElementById("bg").classList.add("hidden"); };
-      // Hand the preloaded buffer to the engine the way startGame does for a
-      // URL, except we already HAVE the bytes: preloadFile(buffer, NAME) with
-      // a real string name, then engine.start() copies it into the engine FS
-      // as "index.pck" and callMain consumes it via --main-pack.
-      var cfg = GODOT_CONFIG;
-      cfg.args = ["--main-pack", "index.pck"].concat(cfg.args || []);
-      return Promise.all([
-        engine.init(cfg.executable || "index"),
-        engine.preloadFile(pack, "index.pck"),
-      ]).then(function () { return engine.start(); }).then(begun, fail);
+      // Stock engine path: startGame fetches "index.pck" itself \u2014 the
+      // service worker serves it assembled from the cached chunks, so the
+      // engine runs exactly the loader code path it shipped with.
+      if (size > 0) {
+        return engine.startGame({ mainPack: "index.pck" }).then(begun, fail);
+      }
+      // CDN refused ranges (rare): stream the whole pack straight from it
+      return engine.startGame({ mainPack: CDN_BASE }).then(begun, fail);
     }).catch(fail);
   });
 })();

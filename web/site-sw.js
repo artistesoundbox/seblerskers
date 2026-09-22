@@ -55,9 +55,11 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  // pack chunks: cache-first by exact URL (keys already encode the size)
+  // pack requests: a chunk fetch carries ?s=<size>&c=<n> and is served by
+  // exact URL; the engine's bare "index.pck" fetch is assembled from chunks
   if (PACK_FILE.test(url.pathname)) {
-    event.respondWith(cacheFirst(req, true));
+    if (url.search) event.respondWith(cacheFirst(req, true));
+    else event.respondWith(servePack(req));
     return;
   }
 
@@ -124,4 +126,68 @@ function cachedLength(resp) {
   if (!resp) return null;
   const h = resp.headers.get("content-length");
   return h ? String(Number(h)) : null;
+}
+
+/* Pack assembly. The shell caches every 8 MB chunk under size-keyed URLs
+   BEFORE the engine starts; when the engine's stock loader then fetches
+   same-origin "index.pck", this streams the cached chunks out as one big
+   response — the pack is never materialized twice in memory. If the chunk
+   set is incomplete (quota eviction, a racing first visit), fall back to
+   streaming straight from the game-repo CDN instead of stranding the
+   engine. */
+const PACK_ORIGIN = "https://artistesoundbox.github.io";
+const CHUNK_SIZE = 8 * 1024 * 1024;
+
+function packUrl(size, idx) {
+  return PACK_ORIGIN + "/seblerskers/index.pck?s=" + size + "&c=" + idx;
+}
+
+async function servePack(req) {
+  const cache = await caches.open(CACHE);
+  const keys = await cache.keys();
+  let size = 0;
+  let count = 0;
+  const have = {};
+  keys.forEach(function (k) {
+    const m = k.url.match(/\?s=(\d+)&c=(\d+)$/);
+    if (!m) return;
+    if (!size) size = Number(m[1]);
+    if (Number(m[1]) === size) { have[Number(m[2])] = true; count++; }
+  });
+
+  const cdn = PACK_ORIGIN + "/seblerskers/index.pck";
+  if (!size || !count) {
+    return fetch(cdn, { mode: "cors", cache: "no-store" });
+  }
+
+  const chunks = Math.ceil(size / CHUNK_SIZE);
+  let complete = true;
+  for (let i = 0; i < chunks; i++) {
+    if (!have[i]) { complete = false; break; }
+  }
+  if (!complete) {
+    return fetch(cdn, { mode: "cors", cache: "no-store" });
+  }
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        for (let i = 0; i < chunks; i++) {
+          const resp = await cache.match(packUrl(size, i));
+          if (!resp) throw new Error("chunk " + i + " vanished mid-stream");
+          controller.enqueue(new Uint8Array(await resp.arrayBuffer()));
+        }
+        controller.close();
+      } catch (e) {
+        controller.error(e);
+      }
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(size),
+    },
+  });
 }
