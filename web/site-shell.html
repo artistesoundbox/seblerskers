@@ -172,7 +172,7 @@ const GODOT_THREADS_ENABLED = false;
       bar.style.width = Math.round(100 * cur / total) + "%";
       status.textContent = "loading\u2026 " + Math.round(100 * cur / total) + "%";
     } else {
-      status.textContent = "loading\u2026 " + cur + " kb";
+      status.textContent = "fetching the hold\u2026 " + (cur / 1048576).toFixed(1) + " MB";
     }
   };
 
