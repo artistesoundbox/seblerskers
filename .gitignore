@@ -13,3 +13,7 @@ build/
 # Mono-specific ignores
 .mono/
 data_*/
+godot-FirstPersonStarter-c9f77c321f63d37ad2d6067107c9c930aa1fae18/
+
+# Local web-export copies (the Pages workflow rebuilds these; never commit them)
+game/

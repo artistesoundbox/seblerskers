@@ -26,12 +26,6 @@ glow_hdr_threshold = 0.9
 fog_enabled = true
 fog_light_color = Color(0.862745, 0.592157, 0.415686, 1)
 fog_sun_scatter = 0.34
-# Ground mist: the height layer hugs the terrain (dense at your feet,
-# gone by ~6 m up) so flying or climbing reads as rising above the
-# haze; the global distance fog is kept faint so far shores only
-# slightly soften. At dusk the mist tints amber so the low sun scatters
-# through it instead of cutting a cold grey band across the warm sky.
-fog_density = 0.00028
 fog_sky_affect = 0.1
 fog_height = 1.2
 fog_height_density = 0.5
