@@ -11,24 +11,31 @@
   body { display: flex; align-items: center; justify-content: center;
          font-family: Georgia, 'Times New Roman', serif; color: #f1eee6; }
   #frame { position: relative; width: 100vw; height: 100vh; }
+  #bg { position: absolute; inset: 0; z-index: 0; background: #0a0908 center / cover no-repeat; }
+  #bg::after { content: ""; position: absolute; inset: 0;
+               background: linear-gradient(180deg, rgba(10,9,8,.30) 0%, rgba(10,9,8,.55) 55%, rgba(10,9,8,.82) 100%); }
   #canvas { position: absolute; inset: 0; width: 100%; height: 100%;
             display: block; background: #000; outline: none; touch-action: none; }
-  #veil { position: absolute; inset: 0; background: #0a0908; z-index: 5;
+  #veil { position: absolute; inset: 0; z-index: 5;
           display: flex; flex-direction: column; align-items: center;
-          justify-content: center; gap: 18px; text-align: center; padding: 16px; }
-  #veil h1 { font-size: clamp(28px, 6vw, 54px); letter-spacing: 6px;
-             color: #d8c07a; text-shadow: 0 2px 12px #000; font-weight: normal; }
-  #veil .tag { font-style: italic; opacity: .75; font-size: clamp(13px, 2.5vw, 18px); }
+          justify-content: center; gap: 16px; text-align: center; padding: 16px; }
+  #veil h1 { font-size: clamp(30px, 7vw, 58px); letter-spacing: 6px;
+             color: #d8c07a; text-shadow: 0 2px 14px #000, 0 0 30px rgba(0,0,0,.8);
+             font-weight: normal; }
+  #veil .tag { font-style: italic; opacity: .85; font-size: clamp(13px, 2.5vw, 18px);
+               text-shadow: 0 1px 8px #000; }
   #start-btn { margin-top: 10px; font: inherit; font-size: clamp(16px, 3.4vw, 24px);
-               color: #f1eee6; background: #2a241c; border: 2px solid #b8964f;
-               border-radius: 40px; padding: 14px 44px; cursor: pointer; }
-  #start-btn:hover { background: #3a3126; }
+               color: #f1eee6; background: rgba(42,36,28,.85); border: 2px solid #b8964f;
+               border-radius: 40px; padding: 14px 44px; cursor: pointer;
+               text-shadow: 0 1px 6px #000; }
+  #start-btn:hover { background: rgba(58,49,38,.9); }
   #progress-wrap { width: min(70vw, 420px); height: 10px; border: 1px solid #6a5a38;
-                   border-radius: 6px; overflow: hidden; display: none; }
+                   border-radius: 6px; overflow: hidden; display: none;
+                   background: rgba(0,0,0,.45); }
   #progress { height: 100%; width: 0%; background: linear-gradient(90deg, #8a6d2f, #d8c07a); }
-  #status { font-size: 14px; opacity: .8; min-height: 18px; }
-  #note { margin-top: 14px; font-size: clamp(11px, 2.2vw, 14px); opacity: .6;
-          max-width: min(90vw, 640px); line-height: 1.5; }
+  #status { font-size: 14px; opacity: .9; min-height: 18px; text-shadow: 0 1px 6px #000; }
+  #note { margin-top: 10px; font-size: clamp(11px, 2.2vw, 14px); opacity: .85;
+          max-width: min(92vw, 660px); line-height: 1.5; text-shadow: 0 1px 6px #000; }
   #rotate-hint { display: none; position: fixed; inset: 0; z-index: 999;
                  background: #0a0908; color: #f1eee6; align-items: center;
                  justify-content: center; text-align: center; padding: 24px;
@@ -40,6 +47,7 @@
 <body>
 <div id="rotate-hint">&#10227; Rotate your phone &mdash;<br>SEBLERSKERS plays in landscape</div>
 <div id="frame">
+  <div id="bg"></div>
   <canvas id="canvas"></canvas>
   <div id="veil">
     <h1>SEBLERSKERS</h1>
@@ -50,9 +58,11 @@
     <div id="note">
       Keyboard: WASD move &middot; mouse look &middot; Space jump &middot; click attack &middot;
       Tab/Q scroll &middot; Esc pause<br>
-      Touch: left-thumb joystick &middot; right-thumb look &middot; on-screen buttons
-      (a controller works too)<br>
-      Board the longship with Space/JUMP, swap seats with C/SEAT.
+      Touch: left-thumb joystick &middot; right-thumb look &middot; on-screen buttons &middot;
+      plug in an Xbox controller and it just works<br>
+      Big download: on phones this resumable loader keeps going even if your
+      connection dips &mdash; if the tab reloads, press Set sail again and it
+      picks up where it left off.
     </div>
   </div>
 </div>
@@ -61,19 +71,28 @@
 /*
  * SEBLERSKERS shell for the vitahuesosite portal (served from /seblerskers/).
  *
- * The engine (index.js / index.wasm / index.side.wasm / worklets / the
- * terrain GDExtension) lives in this folder, but the game pack
- * (index.pck, ~535 MB) streams cross-origin from the game repo's GitHub
- * Pages CDN at artistesoundbox.github.io/seblerskers/ — Fastly-served,
- * no git-lfs quota, and refreshed automatically whenever the game
- * repo's deploy workflow builds a new pack. github.io sends
- * Access-Control-Allow-Origin: *, so the fetch just works.
+ * - Engine (index.js / index.wasm / index.side.wasm / worklets / terrain
+ *   GDExtension) lives in this folder.
+ * - The game pack (index.pck, ~535 MB) streams cross-origin from the game
+ *   repo's GitHub Pages CDN (artistesoundbox.github.io/seblerskers/), which
+ *   sends Access-Control-Allow-Origin: * — no quota, refreshed by that repo's
+ *   deploy workflow whenever a new build ships.
  *
- * The ?v= stamp busts browser/proxy caches once per day; the CDN itself
- * also re-validates after its 10-minute max-age.
+ * MOBILE-SAFE LOADER
+ * Plain godot fetches download the whole ~535 MB pack in one request; on a
+ * phone (or any flaky link) one dropped connection throws everything away
+ * and the "download" never completes. This shell instead streams the pack
+ * in 8 MB chunks itself, stitches them in memory, and hands the finished
+ * ArrayBuffer to the engine. Benefits:
+ *   - every chunk is a small, independent request — one failure retries
+ *     only that 8 MB slice (3 attempts, growing pause), not the whole file
+ *   - progress reads honestly (bytes actually received / known total)
+ *   - surviving chunks stay in the HTTP cache, so a reload resumes close
+ *     to where you died instead of starting over
  */
 const PACK_URL = "https://artistesoundbox.github.io/seblerskers/index.pck?v=" +
   new Date().toISOString().slice(0, 10);
+const CHUNK = 8 * 1024 * 1024; // 8 MB slices
 
 const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,
   "ensureCrossOriginIsolationHeaders":false,"executable":"index",
@@ -99,18 +118,96 @@ const GODOT_THREADS_ENABLED = false;
       status.textContent = "loading\u2026 " + cur + " kb";
     }
   };
+
   var engine = new Engine(GODOT_CONFIG);
+  /* cover art: big screen gets the 1920px version, small a 61 KB one */
+  document.getElementById("bg").style.backgroundImage =
+    'url("./' + ((window.innerWidth < 900) ? "site-shell-cover-small.jpg" : "site-shell-cover.jpg") + '")';
   function fail(err) {
     status.textContent = "This browser can't run the saga (" + err + "). " +
       "Try Chrome/Edge/Firefox on desktop, or Safari 15+ / Chrome on Android.";
   }
+
+  function setBar(cur, total) {
+    wrap.style.display = "block";
+    var pct = Math.round(100 * cur / total);
+    bar.style.width = pct + "%";
+    status.textContent = "loading\u2026 " + pct + "%  (" +
+      (cur / 1048576).toFixed(0) + " of " + (total / 1048576).toFixed(0) + " MB)";
+  }
+
+  function fetchChunk(url, begin, end, tries) {
+    return fetch(url, {
+      headers: { "Range": "bytes=" + begin + "-" + (end - 1) },
+      cache: "force-cache",
+      redirect: "follow",
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error("HTTP " + resp.status + " for chunk " + begin);
+      return resp.arrayBuffer().then(function (buf) {
+        if (buf.byteLength !== end - begin) {
+          throw new Error("short chunk: got " + buf.byteLength +
+            " of " + (end - begin));
+        }
+        return buf;
+      });
+    }).catch(function (err) {
+      if (tries <= 0) throw err;
+      return new Promise(function (resolve) {
+        setTimeout(resolve, 300 * (4 - tries) * (4 - tries));
+      }).then(function () {
+        return fetchChunk(url, begin, end, tries - 1);
+      });
+    });
+  }
+
+  function downloadPack(onProgress) {
+    return fetch(PACK_URL, { method: "HEAD", cache: "no-store" })
+      .then(function (head) {
+        var size = Number(head.headers.get("Content-Length"));
+        if (!head.ok || !size || head.headers.get("Accept-Ranges") !== "bytes") {
+          return null; // fall back to the engine's own loader
+        }
+        var chunks = Math.ceil(size / CHUNK);
+        var parts = new Array(chunks);
+        var done = 0;
+        var next = 0;
+        var workers = new Array(Math.min(4, chunks));
+        function run(i) {
+          if (i >= chunks) return Promise.resolve();
+          var idx = next++;
+          return fetchChunk(PACK_URL, idx * CHUNK,
+            Math.min(size, (idx + 1) * CHUNK), 3).then(function (buf) {
+            parts[idx] = buf;
+            done += buf.byteLength;
+            onProgress(done, size);
+            return run(i);
+          });
+        }
+        for (var w = 0; w < workers.length; w++) workers[w] = run(w);
+        return Promise.all(workers).then(function () {
+          var out = new Uint8Array(size);
+          for (var c = 0; c < chunks; c++) out.set(new Uint8Array(parts[c]), c * CHUNK);
+          return out.buffer;
+        });
+      })
+      .catch(function () { return null; });
+  }
+
   btn.addEventListener("click", function () {
     btn.disabled = true;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
-    engine.startGame({ mainPack: PACK_URL })
-      .then(function () { veil.classList.add("hidden"); })
-      .catch(fail);
+    downloadPack(setBar).then(function (pack) {
+      if (pack) {
+        return engine.startGame({ mainPack: pack })
+          .then(function () { veil.classList.add("hidden"); })
+          .catch(fail);
+      }
+      // CDN refused ranges (unlikely): stream whole-pack as before
+      return engine.startGame({ mainPack: PACK_URL })
+        .then(function () { veil.classList.add("hidden"); })
+        .catch(fail);
+    }).catch(fail);
   });
 })();
 </script>
