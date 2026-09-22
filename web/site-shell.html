@@ -290,10 +290,14 @@ const GODOT_THREADS_ENABLED = false;
         var junk = [];
         var prefix = CDN_BASE + "?s=";
         keys.forEach(function (k) {
-          if (k.url.indexOf(prefix) === 0) have.push(Number(k.url.slice(prefix.length)));
-          else junk.push(k);
+          var m = k.url.match(/^[^?]*\?s=\d+&c=(\d+)$/);
+          if (k.url.indexOf(prefix) === 0 && m) {
+            have.push(Number(m[1]));   // the CHUNK INDEX, not the size
+          } else {
+            junk.push(k);
+          }
         });
-        // prune chunks from other pack sizes so the cache stays bounded
+        // prune chunks from other pack sizes / malformed keys
         junk.forEach(function (k) { try { c.delete(k); } catch (e) { } });
         return have;
       });
@@ -328,15 +332,20 @@ const GODOT_THREADS_ENABLED = false;
           var out = new Uint8Array(size);
           var done = 0;
           var next = 0;
+          var claimedAll = false;
+          function claim() {            // -1 once every chunk is taken
+            if (claimedAll || next >= chunks) { claimedAll = true; return -1; }
+            return next++;
+          }
           var workers = new Array(Math.min(4, chunks));
           function store(idx, buf) {
             out.set(new Uint8Array(buf), idx * CHUNK); // buf drops after this
             done += buf.byteLength;
             onProgress(done, size);
           }
-          function run(i) {
-            if (i >= chunks) return Promise.resolve();
-            var idx = next++;
+          function run() {
+            var idx = claim();
+            if (idx < 0) return Promise.resolve();
             var begin = idx * CHUNK;
             var end = Math.min(size, (idx + 1) * CHUNK);
             var deliver;
@@ -365,18 +374,22 @@ const GODOT_THREADS_ENABLED = false;
             }
             return deliver.then(function (buf) {
               store(idx, buf);
-              return run(i);
+              return run();
             });
           }
-          for (var w = 0; w < workers.length; w++) workers[w] = run(w);
+          for (var w = 0; w < workers.length; w++) workers[w] = run();
           return Promise.all(workers).then(function () {
+            if (done !== size) throw new Error("pack incomplete: " + done + " of " + size);
             return out.buffer;
           });
         });
       })
       .catch(function (err) {
         if (err && err.message && err.message.indexOf("offline") === 0) throw err;
-        return null; // any cache/HEAD trouble: fall back to the engine's own loader
+        // Chunked load failed mid-flight (network died, CDN 5xx...). Do NOT
+        // fall back to the engine's own loader here: that would silently
+        // re-download the whole 500 MB pack over the user's head. Surface it.
+        throw err || new Error("chunked pack load failed");
       });
   }
 
@@ -388,12 +401,7 @@ const GODOT_THREADS_ENABLED = false;
       status.textContent = "raising the sails \u2014 starting the engine\u2026";
       var begun = function () { veil.classList.add("hidden");
         document.getElementById("bg").classList.add("hidden"); };
-      if (pack) {
-        return engine.startGame({ mainPack: pack })
-          .then(begun, fail);
-      }
-      // CDN refused ranges (unlikely): stream whole-pack as before
-      return engine.startGame({ mainPack: CDN_BASE })
+      return engine.startGame({ mainPack: pack })
         .then(begun, fail);
     }).catch(fail);
   });
