@@ -290,9 +290,9 @@ const GODOT_THREADS_ENABLED = false;
         var junk = [];
         var prefix = CDN_BASE + "?s=";
         keys.forEach(function (k) {
-          var m = k.url.match(/^[^?]*\?s=\d+&c=(\d+)$/);
-          if (k.url.indexOf(prefix) === 0 && m) {
-            have.push(Number(m[1]));   // the CHUNK INDEX, not the size
+          var m = k.url.match(/^[^?]*\?s=(\d+)&c=(\d+)$/);
+          if (k.url.indexOf(prefix) === 0 && m && Number(m[1]) === size) {
+            have.push(Number(m[2]));   // the CHUNK INDEX, not the size
           } else {
             junk.push(k);
           }
@@ -401,8 +401,16 @@ const GODOT_THREADS_ENABLED = false;
       status.textContent = "raising the sails \u2014 starting the engine\u2026";
       var begun = function () { veil.classList.add("hidden");
         document.getElementById("bg").classList.add("hidden"); };
-      return engine.startGame({ mainPack: pack })
-        .then(begun, fail);
+      // Hand the preloaded buffer to the engine the way startGame does for a
+      // URL, except we already HAVE the bytes: preloadFile(buffer, NAME) with
+      // a real string name, then engine.start() copies it into the engine FS
+      // as "index.pck" and callMain consumes it via --main-pack.
+      var cfg = GODOT_CONFIG;
+      cfg.args = ["--main-pack", "index.pck"].concat(cfg.args || []);
+      return Promise.all([
+        engine.init(cfg.executable || "index"),
+        engine.preloadFile(pack, "index.pck"),
+      ]).then(function () { return engine.start(); }).then(begun, fail);
     }).catch(fail);
   });
 })();
