@@ -152,6 +152,11 @@ const GODOT_THREADS_ENABLED = false;
 
 (function () {
   "use strict";
+  /* stage logging: every load phase lands in the console so failures are
+     diagnosable without guesswork ("[shell] stage → detail") */
+  function slog(stage, detail) {
+    console.info("[shell] " + stage + (detail !== undefined ? " → " + detail : ""));
+  }
   var veil = document.getElementById("veil");
   var status = document.getElementById("status");
   var wrap = document.getElementById("progress-wrap");
@@ -236,6 +241,7 @@ const GODOT_THREADS_ENABLED = false;
   document.getElementById("bg").style.backgroundImage =
     'url("./' + ((window.innerWidth < 900) ? "site-shell-cover-small.jpg" : "site-shell-cover.jpg") + '")';
   function fail(err) {
+    slog("FAIL", err && (err.stack || err.message) || String(err));
     status.textContent = "This browser can't run the saga (" + err + "). " +
       "Try Chrome/Edge/Firefox on desktop, or Safari 15+ / Chrome on Android.";
   }
@@ -317,6 +323,7 @@ const GODOT_THREADS_ENABLED = false;
     return fetch(CDN_BASE + "?cb=" + Date.now(), { method: "HEAD", cache: "no-store" })
       .then(function (head) {
         var size = Number(head.headers.get("Content-Length"));
+        slog("HEAD", "size=" + size + " ranges=" + head.headers.get("Accept-Ranges") + " status=" + head.status);
         if (!head.ok || !size || head.headers.get("Accept-Ranges") !== "bytes") {
           return -1; // no chunked path: engine loads the CDN URL directly
         }
@@ -328,6 +335,7 @@ const GODOT_THREADS_ENABLED = false;
             if (i >= 0 && i < chunks) { have[i] = true; doneCount++; }
           });
           var missing = chunks - doneCount;
+          slog("sweep", "have " + doneCount + "/" + chunks + " of size " + size);
           if (doneCount === chunks) {
             status.textContent = "cached copy found \u2014 unloading the cargo\u2026";
           } else if (doneCount) {
@@ -365,6 +373,7 @@ const GODOT_THREADS_ENABLED = false;
           }
           for (var w = 0; w < workers.length; w++) workers[w] = run();
           return Promise.all(workers).then(function () {
+            slog("chunks done", "all " + chunks + " cached (size " + size + ")");
             onProgress(size, size);
             return size;
           });
@@ -383,16 +392,22 @@ const GODOT_THREADS_ENABLED = false;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
     downloadPack(setBar).then(function (size) {
+      slog("downloadPack resolved", size);
       status.textContent = "raising the sails \u2014 starting the engine\u2026";
-      var begun = function () { veil.classList.add("hidden");
-        document.getElementById("bg").classList.add("hidden"); };
+      var begun = function () {
+        slog("engine started");
+        veil.classList.add("hidden");
+        document.getElementById("bg").classList.add("hidden");
+      };
       // Stock engine path: startGame fetches "index.pck" itself \u2014 the
       // service worker serves it assembled from the cached chunks, so the
       // engine runs exactly the loader code path it shipped with.
       if (size > 0) {
+        slog("startGame", "mainPack=index.pck (SW-assembled)");
         return engine.startGame({ mainPack: "index.pck" }).then(begun, fail);
       }
       // CDN refused ranges (rare): stream the whole pack straight from it
+      slog("startGame", "mainPack=CDN_BASE (no ranges)");
       return engine.startGame({ mainPack: CDN_BASE }).then(begun, fail);
     }).catch(fail);
   });
