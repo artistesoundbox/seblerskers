@@ -87,7 +87,8 @@
       plug in an Xbox controller and it just works<br>
       Big download: on phones this resumable loader keeps going even if your
       connection dips &mdash; if the tab reloads, press Set sail again and it
-      picks up where it left off.
+      picks up where it left off. After one full load the whole saga is
+      cached and boots offline.
     </div>
   </div>
 </div>
@@ -110,7 +111,7 @@
  *   sends Access-Control-Allow-Origin: * — no quota, refreshed by that repo's
  *   deploy workflow whenever a new build ships.
  *
- * MOBILE-SAFE LOADER
+ * MOBILE-SAFE, RESUMABLE, CACHE-BACKED LOADER
  * Plain godot fetches download the whole ~535 MB pack in one request; on a
  * phone (or any flaky link) one dropped connection throws everything away
  * and the "download" never completes. This shell instead streams the pack
@@ -118,12 +119,13 @@
  * ArrayBuffer to the engine. Benefits:
  *   - every chunk is a small, independent request — one failure retries
  *     only that 8 MB slice (3 attempts, growing pause), not the whole file
+ *   - a service worker (site-sw.js) stores every completed chunk in the
+ *     Cache API under a size-keyed URL, so returning players replay the
+ *     finished chunks from disk instantly and only fetch what's missing —
+ *     after one full load the game boots offline
  *   - progress reads honestly (bytes actually received / known total)
- *   - surviving chunks stay in the HTTP cache, so a reload resumes close
- *     to where you died instead of starting over
  */
-const PACK_URL = "https://artistesoundbox.github.io/seblerskers/index.pck?v=" +
-  new Date().toISOString().slice(0, 10);
+const CDN_BASE = "https://artistesoundbox.github.io/seblerskers/index.pck";
 const CHUNK = 8 * 1024 * 1024; // 8 MB slices
 
 const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,
@@ -140,6 +142,15 @@ const GODOT_THREADS_ENABLED = false;
   var wrap = document.getElementById("progress-wrap");
   var bar = document.getElementById("progress");
   var btn = document.getElementById("start-btn");
+  /* pack-cache service worker: registers quietly; not required to play */
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./site-sw.js").catch(function () { });
+    navigator.serviceWorker.addEventListener("message", function (e) {
+      if (e.data && e.data.type === "seb-engine-updated") {
+        console.info("seblerskers: updated engine asset served next reload:", e.data.file);
+      }
+    });
+  }
   GODOT_CONFIG["canvas"] = document.getElementById("canvas");
   GODOT_CONFIG["onProgress"] = function (cur, total) {
     if (total > 0) {
@@ -171,7 +182,7 @@ const GODOT_THREADS_ENABLED = false;
   function fetchChunk(url, begin, end, tries) {
     return fetch(url, {
       headers: { "Range": "bytes=" + begin + "-" + (end - 1) },
-      cache: "force-cache",
+      cache: "no-store",
       redirect: "follow",
     }).then(function (resp) {
       if (!resp.ok) throw new Error("HTTP " + resp.status + " for chunk " + begin);
@@ -192,37 +203,110 @@ const GODOT_THREADS_ENABLED = false;
     });
   }
 
+  /* cache-key helpers: chunk URLs embed the pack's total size, so a new
+     build (new size) can never be stitched from stale chunks */
+  function chunkKey(size, idx) {
+    return CDN_BASE + "?s=" + size + "&c=" + idx;
+  }
+  var packCache = null;
+  function openCache() {
+    if (!packCache) packCache = (self.caches ? caches.open("seb-pack-v1") : null);
+    return packCache || Promise.resolve(null);
+  }
+  function sweepCache(size) {
+    return openCache().then(function (c) {
+      if (!c) return [];
+      return c.keys().then(function (keys) {
+        var have = [];
+        var junk = [];
+        var prefix = CDN_BASE + "?s=";
+        keys.forEach(function (k) {
+          if (k.url.indexOf(prefix) === 0) have.push(Number(k.url.slice(prefix.length)));
+          else junk.push(k);
+        });
+        // prune chunks from other pack sizes so the cache stays bounded
+        junk.forEach(function (k) { try { c.delete(k); } catch (e) { } });
+        return have;
+      });
+    }).catch(function () { return []; });
+  }
+
   function downloadPack(onProgress) {
-    return fetch(PACK_URL, { method: "HEAD", cache: "no-store" })
+    return fetch(CDN_BASE, { method: "HEAD", cache: "no-store" })
       .then(function (head) {
         var size = Number(head.headers.get("Content-Length"));
         if (!head.ok || !size || head.headers.get("Accept-Ranges") !== "bytes") {
           return null; // fall back to the engine's own loader
         }
         var chunks = Math.ceil(size / CHUNK);
-        var parts = new Array(chunks);
-        var done = 0;
-        var next = 0;
-        var workers = new Array(Math.min(4, chunks));
-        function run(i) {
-          if (i >= chunks) return Promise.resolve();
-          var idx = next++;
-          return fetchChunk(PACK_URL, idx * CHUNK,
-            Math.min(size, (idx + 1) * CHUNK), 3).then(function (buf) {
-            parts[idx] = buf;
-            done += buf.byteLength;
-            onProgress(done, size);
-            return run(i);
+        return sweepCache(size).then(function (haveList) {
+          var have = {};
+          haveList.forEach(function (i) { if (i < chunks) have[i] = true; });
+          var missing = chunks - haveList.length;
+          if (missing === 0) {
+            status.textContent = "cached copy found \u2014 unloading the cargo\u2026";
+          } else if (haveList.length) {
+            status.textContent = "resuming \u2014 " + haveList.length + " of " +
+              chunks + " parts cached\u2026";
+          }
+          if (missing === 0 && !navigator.onLine) {
+            // fully cached pack works offline
+          } else if (!navigator.onLine && missing > 0) {
+            return Promise.reject(new Error("offline and the full pack isn't cached yet (" +
+              haveList.length + " of " + chunks + " parts) \u2014 reconnect once to finish caching it"));
+          }
+          var parts = new Array(chunks);
+          var done = 0;
+          var next = 0;
+          var workers = new Array(Math.min(4, chunks));
+          function run(i) {
+            if (i >= chunks) return Promise.resolve();
+            var idx = next++;
+            var deliver;
+            if (have[idx]) {
+              deliver = openCache().then(function (c) {
+                return c.match(chunkKey(size, idx)).then(function (r) {
+                  if (!r) throw new Error("cache evicted chunk " + idx);
+                  return r.arrayBuffer();
+                });
+              }).catch(function () {
+                // evicted between sweep and read: fetch and re-cache it
+                return fetchChunk(chunkKey(size, idx), idx * CHUNK,
+                  Math.min(size, (idx + 1) * CHUNK), 3).then(function (buf) {
+                  openCache().then(function (c) {
+                    if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
+                  });
+                  return buf;
+                });
+              });
+            } else {
+              deliver = fetchChunk(chunkKey(size, idx), idx * CHUNK,
+                Math.min(size, (idx + 1) * CHUNK), 3).then(function (buf) {
+                openCache().then(function (c) {
+                  if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
+                });
+                return buf;
+              });
+            }
+            return deliver.then(function (buf) {
+              parts[idx] = buf;
+              done += buf.byteLength;
+              onProgress(done, size);
+              return run(i);
+            });
+          }
+          for (var w = 0; w < workers.length; w++) workers[w] = run(w);
+          return Promise.all(workers).then(function () {
+            var out = new Uint8Array(size);
+            for (var c = 0; c < chunks; c++) out.set(new Uint8Array(parts[c]), c * CHUNK);
+            return out.buffer;
           });
-        }
-        for (var w = 0; w < workers.length; w++) workers[w] = run(w);
-        return Promise.all(workers).then(function () {
-          var out = new Uint8Array(size);
-          for (var c = 0; c < chunks; c++) out.set(new Uint8Array(parts[c]), c * CHUNK);
-          return out.buffer;
         });
       })
-      .catch(function () { return null; });
+      .catch(function (err) {
+        if (err && err.message && err.message.indexOf("offline") === 0) throw err;
+        return null; // any cache/HEAD trouble: fall back to the engine's own loader
+      });
   }
 
   btn.addEventListener("click", function () {
@@ -237,7 +321,7 @@ const GODOT_THREADS_ENABLED = false;
           .then(begun, fail);
       }
       // CDN refused ranges (unlikely): stream whole-pack as before
-      return engine.startGame({ mainPack: PACK_URL })
+      return engine.startGame({ mainPack: CDN_BASE })
         .then(begun, fail);
     }).catch(fail);
   });
