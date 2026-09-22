@@ -219,6 +219,17 @@ const GODOT_THREADS_ENABLED = false;
   /* pack-cache service worker: registers quietly; not required to play */
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./site-sw.js").catch(function () { });
+    /* control-gap self-heal: a page born before its worker takes control
+       (first visit, update race) can never be served the assembled pack —
+       the engine's same-origin pack fetch would 404. Reload ONCE when the
+       worker is ready but not yet controlling this page. */
+    navigator.serviceWorker.ready.then(function () {
+      if (!navigator.serviceWorker.controller &&
+          !sessionStorage.getItem("seb-sw-reload")) {
+        sessionStorage.setItem("seb-sw-reload", "1");
+        location.reload();
+      }
+    });
     navigator.serviceWorker.addEventListener("message", function (e) {
       if (e.data && e.data.type === "seb-engine-updated") {
         console.info("seblerskers: updated engine asset served next reload:", e.data.file);
@@ -466,8 +477,17 @@ const GODOT_THREADS_ENABLED = false;
       // service worker serves it assembled from the cached chunks, so the
       // engine runs exactly the loader code path it shipped with.
       if (size > 0) {
-        slog("startGame", "mainPack=index.pck (SW-assembled)");
-        return engine.startGame({ mainPack: "index.pck" }).then(begun, fail);
+        var swControls = !("serviceWorker" in navigator) ||
+          !!navigator.serviceWorker.controller;
+        if (swControls) {
+          slog("startGame", "mainPack=index.pck (SW-assembled)");
+          return engine.startGame({ mainPack: "index.pck" }).then(begun, fail);
+        }
+        /* not controlled by the SW (gap race survived the reload guard): the
+           assembled pack is unreachable — stream from the CDN directly rather
+           than 404-ing a file the origin does not host */
+        slog("startGame", "no SW control \u2014 CDN single-stream fallback");
+        return engine.startGame({ mainPack: CDN_BASE }).then(begun, fail);
       }
       // CDN refused ranges (rare): stream the whole pack straight from it
       slog("startGame", "mainPack=CDN_BASE (no ranges)");
