@@ -42,6 +42,31 @@
                  font-size: 18px; line-height: 1.6; }
   @media (orientation: portrait) and (pointer: coarse) { #rotate-hint { display: flex; } }
   .hidden { display: none !important; }
+  /* --- gamepad diagnostics overlay --- */
+  #gp-chip { position: fixed; right: 10px; bottom: 10px; z-index: 1200;
+             font: 11px/1.2 Consolas, monospace; letter-spacing: .08em;
+             color: #d8c07a; background: rgba(10,9,8,.75); border: 1px solid #6a5a38;
+             border-radius: 14px; padding: 6px 12px; cursor: pointer; opacity: .7; }
+  #gp-chip:hover { opacity: 1; }
+  #gp-panel { position: fixed; right: 10px; bottom: 44px; z-index: 1200; display: none;
+              width: min(92vw, 350px); max-height: 62vh; overflow-y: auto;
+              font: 11px/1.55 Consolas, monospace; color: #e8ddc8; text-align: left;
+              background: rgba(8,7,6,.93); border: 1px solid #6a5a38;
+              border-radius: 10px; padding: 10px 12px; }
+  #gp-panel.open { display: block; }
+  #gp-panel h3 { font: inherit; letter-spacing: .12em; color: #d8c07a; margin: 0 0 6px; }
+  #gp-panel .pad { margin-bottom: 8px; padding-bottom: 6px;
+                   border-bottom: 1px solid rgba(106,90,56,.4); }
+  #gp-panel .none { opacity: .75; }
+  #gp-panel .btn-lit { color: #ffb040; font-weight: bold; }
+  #gp-panel .axis-bar { display: inline-block; vertical-align: middle; width: 58px;
+                        height: 6px; background: rgba(255,255,255,.12);
+                        border-radius: 3px; position: relative; margin: 0 6px; }
+  #gp-panel .axis-fill { position: absolute; top: 0; bottom: 0; left: 50%;
+                         background: #8fb4e8; border-radius: 3px; }
+  #gp-log { margin-top: 6px; opacity: .85; white-space: pre-line; }
+  #gp-hint { margin-top: 8px; opacity: .6; font-family: Georgia, serif;
+             font-style: italic; line-height: 1.45; }
 </style>
 </head>
 <body>
@@ -65,6 +90,13 @@
       picks up where it left off.
     </div>
   </div>
+</div>
+<button id="gp-chip" type="button">GAMEPAD: 0</button>
+<div id="gp-panel">
+  <h3>GAMEPAD DIAGNOSTICS</h3>
+  <div id="gp-body"></div>
+  <div id="gp-log"></div>
+  <div id="gp-hint">Pad listed here but the game ignores it? Send Buffy exactly what this panel shows.</div>
 </div>
 <script src="./index.js"></script>
 <script>
@@ -209,6 +241,80 @@ const GODOT_THREADS_ENABLED = false;
         .then(begun, fail);
     }).catch(fail);
   });
+})();
+
+/*
+ * Gamepad diagnostics overlay — diagnoses "Xbox controller not responding"
+ * on the live site. Polls navigator.getGamepads() every animation frame:
+ * connected pads with id + mapping, every button (lit when pressed, Xbox
+ * face-button labels under the standard mapping), stick/trigger axes as
+ * center-anchored bars, and a connect/disconnect event log. The panel
+ * auto-opens when a pad connects. Nothing here touches the game.
+ */
+(function () {
+  "use strict";
+  var chip = document.getElementById("gp-chip");
+  var panel = document.getElementById("gp-panel");
+  var body = document.getElementById("gp-body");
+  var logEl = document.getElementById("gp-log");
+  var labels = ["A","B","X","Y","LB","RB","LT","RT","Back","Start",
+                "LS","RS","Up","Down","Left","Right","Guide"];
+  var axisNames = ["L-X", "L-Y", "R-X", "R-Y", "LT", "RT"];
+  var logs = [];
+  function log(msg) {
+    logs.push(new Date().toTimeString().slice(0, 8) + "  " + msg);
+    if (logs.length > 6) logs.shift();
+    logEl.textContent = logs.join("\n");
+  }
+  function fmtAxis(v) {
+    var pct = Math.max(0, Math.min(1, Math.abs(v))) * 50;
+    var left = v < 0 ? 50 - pct : 50;
+    return '<span class="axis-bar"><span class="axis-fill" style="left:' +
+      left.toFixed(1) + '%;width:' + pct.toFixed(1) + '%"></span></span>' +
+      (v >= 0 ? "+" : "") + v.toFixed(2);
+  }
+  function render() {
+    var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    var n = 0, html = "";
+    for (var i = 0; i < pads.length; i++) {
+      var p = pads[i];
+      if (!p) continue;
+      n++;
+      html += '<div class="pad"><b>[' + p.index + "] " + (p.id || "?") +
+        "</b><br>mapping: " + (p.mapping || "none") + "<br>";
+      if (p.buttons && p.buttons.length) {
+        var bs = [];
+        for (var b = 0; b < p.buttons.length && b < labels.length; b++) {
+          var on = p.buttons[b].pressed || p.buttons[b].value > 0.12;
+          bs.push(on ? '<span class="btn-lit">' + labels[b] + "</span>" : labels[b]);
+        }
+        html += "buttons: " + bs.join(" ") + "<br>";
+      }
+      if (p.axes && p.axes.length) {
+        for (var a = 0; a < p.axes.length && a < axisNames.length; a++) {
+          html += (axisNames[a] || ("axis" + a)) + " " + fmtAxis(p.axes[a]) + "<br>";
+        }
+      }
+      html += "</div>";
+    }
+    if (!n) {
+      html = '<div class="none">No gamepads detected. Press any button on the ' +
+        'controller \u2014 browsers only reveal a pad after a press.</div>';
+    }
+    body.innerHTML = html;
+    chip.textContent = "GAMEPAD: " + n;
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+  window.addEventListener("gamepadconnected", function (e) {
+    log("CONNECTED [" + e.gamepad.index + "] " + e.gamepad.id +
+      " (mapping " + (e.gamepad.mapping || "none") + ")");
+    panel.classList.add("open");
+  });
+  window.addEventListener("gamepaddisconnected", function (e) {
+    log("DISCONNECTED [" + e.gamepad.index + "] " + e.gamepad.id);
+  });
+  chip.addEventListener("click", function () { panel.classList.toggle("open"); });
 })();
 </script>
 </body>
