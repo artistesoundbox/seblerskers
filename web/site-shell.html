@@ -134,6 +134,10 @@
  *     finished chunks from disk instantly and only fetch what's missing —
  *     after one full load the game boots offline
  *   - progress reads honestly (bytes actually received / known total)
+ *   - memory stays at ONE copy of the pack: chunks land directly in a
+ *     single preallocated buffer as they arrive (an earlier version held
+ *     chunk copies + a stitched copy — two full packs — which silently
+ *     OOM-killed the wasm engine right after the bar hit 100%)
  */
 const CDN_BASE = "https://artistesoundbox.github.io/seblerskers/index.pck";
 const CHUNK = 8 * 1024 * 1024; // 8 MB slices
@@ -265,13 +269,21 @@ const GODOT_THREADS_ENABLED = false;
             return Promise.reject(new Error("offline and the full pack isn't cached yet (" +
               haveList.length + " of " + chunks + " parts) \u2014 reconnect once to finish caching it"));
           }
-          var parts = new Array(chunks);
+          // ONE preallocated pack buffer; chunks write straight into it
+          var out = new Uint8Array(size);
           var done = 0;
           var next = 0;
           var workers = new Array(Math.min(4, chunks));
+          function store(idx, buf) {
+            out.set(new Uint8Array(buf), idx * CHUNK); // buf drops after this
+            done += buf.byteLength;
+            onProgress(done, size);
+          }
           function run(i) {
             if (i >= chunks) return Promise.resolve();
             var idx = next++;
+            var begin = idx * CHUNK;
+            var end = Math.min(size, (idx + 1) * CHUNK);
             var deliver;
             if (have[idx]) {
               deliver = openCache().then(function (c) {
@@ -281,8 +293,7 @@ const GODOT_THREADS_ENABLED = false;
                 });
               }).catch(function () {
                 // evicted between sweep and read: fetch and re-cache it
-                return fetchChunk(chunkKey(size, idx), idx * CHUNK,
-                  Math.min(size, (idx + 1) * CHUNK), 3).then(function (buf) {
+                return fetchChunk(chunkKey(size, idx), begin, end, 3).then(function (buf) {
                   openCache().then(function (c) {
                     if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
                   });
@@ -290,8 +301,7 @@ const GODOT_THREADS_ENABLED = false;
                 });
               });
             } else {
-              deliver = fetchChunk(chunkKey(size, idx), idx * CHUNK,
-                Math.min(size, (idx + 1) * CHUNK), 3).then(function (buf) {
+              deliver = fetchChunk(chunkKey(size, idx), begin, end, 3).then(function (buf) {
                 openCache().then(function (c) {
                   if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
                 });
@@ -299,16 +309,12 @@ const GODOT_THREADS_ENABLED = false;
               });
             }
             return deliver.then(function (buf) {
-              parts[idx] = buf;
-              done += buf.byteLength;
-              onProgress(done, size);
+              store(idx, buf);
               return run(i);
             });
           }
           for (var w = 0; w < workers.length; w++) workers[w] = run(w);
           return Promise.all(workers).then(function () {
-            var out = new Uint8Array(size);
-            for (var c = 0; c < chunks; c++) out.set(new Uint8Array(parts[c]), c * CHUNK);
             return out.buffer;
           });
         });
@@ -324,6 +330,7 @@ const GODOT_THREADS_ENABLED = false;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
     downloadPack(setBar).then(function (pack) {
+      status.textContent = "raising the sails \u2014 starting the engine\u2026";
       var begun = function () { veil.classList.add("hidden");
         document.getElementById("bg").classList.add("hidden"); };
       if (pack) {
