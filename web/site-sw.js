@@ -145,25 +145,39 @@ function packUrl(size, idx) {
 async function servePack(req) {
   const cache = await caches.open(CACHE);
   const keys = await cache.keys();
-  let size = 0;
-  let count = 0;
-  const have = {};
+  // group chunk keys by pack size — a CI rebuild can briefly leave two
+  // sizes cached, and we must serve whichever set is COMPLETE
+  const bySize = {};
   keys.forEach(function (k) {
     const m = k.url.match(/\?s=(\d+)&c=(\d+)$/);
     if (!m) return;
-    if (!size) size = Number(m[1]);
-    if (Number(m[1]) === size) { have[Number(m[2])] = true; count++; }
+    const s = Number(m[1]);
+    (bySize[s] = bySize[s] || {})[Number(m[2])] = true;
   });
 
   const cdn = PACK_ORIGIN + "/seblerskers/index.pck";
-  if (!size || !count) {
+  let size = 0;
+  for (const s in bySize) {
+    const sz = Number(s);
+    const chunks = Math.ceil(sz / CHUNK_SIZE);
+    let complete = true;
+    for (let i = 0; i < chunks; i++) {
+      if (!bySize[sz][i]) { complete = false; break; }
+    }
+    if (complete) { size = sz; break; }
+    if (!size || Object.keys(bySize[sz]).length > Object.keys(bySize[size]).length) {
+      size = sz; // remember the best partial in case none is complete
+    }
+  }
+
+  if (!size) {
     return fetch(cdn, { mode: "cors", cache: "no-store" });
   }
 
   const chunks = Math.ceil(size / CHUNK_SIZE);
   let complete = true;
   for (let i = 0; i < chunks; i++) {
-    if (!have[i]) { complete = false; break; }
+    if (!bySize[size][i]) { complete = false; break; }
   }
   if (!complete) {
     return fetch(cdn, { mode: "cors", cache: "no-store" });
