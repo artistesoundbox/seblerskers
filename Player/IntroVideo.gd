@@ -12,6 +12,12 @@ extends CanvasLayer
 signal finished
 
 const VIDEO := "res://imports/seblerskers_intro.ogv"
+# Preloaded (not load()-at-runtime): the .ogv decodes when the project
+# imports, NOT when this scene instantiates. Loading 44 MB of Theora in
+# _ready stalled the main thread on the web build — the player stared at
+# a black frame and the Skip button appeared only after the long haul.
+const VIDEO_STREAM := preload("res://imports/seblerskers_intro.ogv")
+const PLAY_DELAY_S := 0.2                          # let one frame paint first
 const INK := Color(0.98, 0.94, 0.82)      # the game's parchment tone
 const FADE_OUT_S := 0.45
 
@@ -36,7 +42,7 @@ func _ready() -> void:
 	# The video, stretched edge to edge (480x272 is ~16:9; the window is
 	# 16:9-ish, so the stretch is imperceptible).
 	_player = VideoStreamPlayer.new()
-	_player.stream = load(VIDEO)
+	_player.stream = VIDEO_STREAM
 	_player.expand = true
 	# The video's own score rides hot — ducked so it sits like a
 	# soundtrack, not a wall of sound (user: the opening war audio is
@@ -67,7 +73,10 @@ func _ready() -> void:
 		# Missing/unimportable video: never trap the player on black.
 		_finish.call_deferred()
 	else:
-		_player.play()
+		# Start a beat late so Skip is on screen BEFORE playback begins —
+		# first-play decode hitches the thread, and a frozen frame with no
+		# visible way out read as "the game is broken" on slower machines.
+		get_tree().create_timer(PLAY_DELAY_S).timeout.connect(_player.play)
 
 
 ## Any key or gamepad button also skips (the button is the visible affordance).

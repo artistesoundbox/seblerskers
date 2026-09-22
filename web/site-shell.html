@@ -146,7 +146,8 @@ const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,
   "ensureCrossOriginIsolationHeaders":false,"executable":"index",
   "experimentalVK":false,"fileSizes":{"index.wasm":1508095},
   "focusCanvas":true,"gdextensionLibs":["libterrain.web.release.wasm32.wasm"],
-  "godotPoolSize":4};
+  "godotPoolSize":4,
+  "persistentDrops":true};
 const GODOT_THREADS_ENABLED = false;
 
 (function () {
@@ -156,6 +157,60 @@ const GODOT_THREADS_ENABLED = false;
   var wrap = document.getElementById("progress-wrap");
   var bar = document.getElementById("progress");
   var btn = document.getElementById("start-btn");
+  /*
+   * Gamepad-to-keyboard bridge for the WEB build only.
+   *
+   * The pad itself is fine — browsers expose it with mapping "standard"
+   * (verified live with an Xbox controller, vendor 045e). The problem is
+   * Godot web UI focus: on the web export, JoypadButton events often fail
+   * to move/press focused UI the way they do on desktop, so the title and
+   * pause menus ignore the pad. This bridge re-injects every pad button
+   * as its conventional keyboard event, which the game's menus, the
+   * intro Skip and the pause screen all handle natively:
+   *   d-pad / left stick  -> arrows      A -> Enter
+   *   B / Back            -> Escape      Start -> Enter
+   * It never synthesizes repeats (menus only need edges) and stops as
+   * soon as gameplay owns input (canvas focus + gameplay flags).
+   */
+  var PAD_MAP = { 0: "Enter", 1: "Escape", 4: "ArrowLeft", 5: "ArrowRight",
+    12: "ArrowUp", 13: "ArrowDown", 14: "ArrowLeft", 15: "ArrowRight",
+    8: "Escape", 9: "Enter" };
+  var padState = {};
+  function padKeyDown(code) {
+    var canvas = GODOT_CONFIG["canvas"];
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: code, code: code,
+      bubbles: true, cancelable: true }));
+  }
+  function padKeyUp(code) {
+    var canvas = GODOT_CONFIG["canvas"];
+    canvas.dispatchEvent(new KeyboardEvent("keyup", { key: code, code: code,
+      bubbles: true, cancelable: true }));
+  }
+  function padToKey(idx, pressed) {
+    var code = PAD_MAP[idx];
+    if (!code) return;
+    if (pressed && !padState[code]) { padState[code] = true; padKeyDown(code); }
+    else if (!pressed && padState[code]) { padState[code] = false; padKeyUp(code); }
+  }
+  function pollPads() {
+    var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (var p = 0; p < pads.length; p++) {
+      var pad = pads[p];
+      if (!pad) continue;
+      for (var b = 0; b < pad.buttons.length; b++) {
+        padToKey(b, pad.buttons[b].pressed);
+      }
+      if (pad.axes.length >= 2) {
+        padToKey(14, pad.axes[0] < -0.6);  // stick left -> ArrowLeft
+        padToKey(15, pad.axes[0] > 0.6);   // stick right -> ArrowRight
+        padToKey(12, pad.axes[1] < -0.6);  // stick up -> ArrowUp
+        padToKey(13, pad.axes[1] > 0.6);   // stick down -> ArrowDown
+      }
+    }
+    requestAnimationFrame(pollPads);
+  }
+  requestAnimationFrame(pollPads);
+
   /* pack-cache service worker: registers quietly; not required to play */
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("./site-sw.js").catch(function () { });
