@@ -311,7 +311,10 @@ const GODOT_THREADS_ENABLED = false;
      response from the cached chunks (site-sw.js), and the engine runs
      exactly the code path it was built for. */
   function downloadPack(onProgress) {
-    return fetch(CDN_BASE, { method: "HEAD", cache: "no-store" })
+    /* ?cb busts Fastly: GitHub Pages' CDN serves cached HEADs for ~10 min
+       after a push, and a stale size would replay an outdated pack against
+       a freshly revalidated engine — the "loads then no project data" trap. */
+    return fetch(CDN_BASE + "?cb=" + Date.now(), { method: "HEAD", cache: "no-store" })
       .then(function (head) {
         var size = Number(head.headers.get("Content-Length"));
         if (!head.ok || !size || head.headers.get("Accept-Ranges") !== "bytes") {

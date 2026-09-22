@@ -178,7 +178,10 @@ async function servePack(req) {
     (bySize[s] = bySize[s] || {})[Number(m[2])] = true;
   });
 
-  const cdn = PACK_ORIGIN + "/seblerskers/index.pck";
+  /* ?cb busts the CDN's ~10-min HEAD/edge cache so a just-pushed CI build
+     is seen immediately; without it the SW could complete-serve an outdated
+     chunk set against freshly revalidated engine files (frankenbuild #2). */
+  const cdn = PACK_ORIGIN + "/seblerskers/index.pck?cb=" + Date.now();
   let size = 0;
   for (const s in bySize) {
     const sz = Number(s);
