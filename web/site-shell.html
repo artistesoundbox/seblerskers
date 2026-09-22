@@ -254,6 +254,33 @@ const GODOT_THREADS_ENABLED = false;
       (cur / 1048576).toFixed(0) + " of " + (total / 1048576).toFixed(0) + " MB)";
   }
 
+  /* integrity witness: the file table Godot needs lives at the head of the
+     pack (first chunk). Compare the CACHED first chunk against a fresh
+     origin-fetched one \u2014 equal means every chunk came from one generation. */
+  function verifyHead(size) {
+    var url = CDN_BASE + "?s=" + size + "&c=0&cb=" + Date.now();
+    var firstLen = Math.min(CHUNK, size);
+    return fetchChunk(url, 0, firstLen, 3).then(function (fresh) {
+      return openCache().then(function (c) {
+        if (!c) return null;
+        return c.match(chunkKey(size, 0)).then(function (r) {
+          return r ? r.arrayBuffer() : null;
+        }).then(function (cached) {
+          if (!cached) throw new Error("first chunk vanished");
+          var n = Math.min(65536, fresh.byteLength, cached.byteLength);
+          var a = new Uint8Array(fresh, 0, n);
+          var b = new Uint8Array(cached, 0, n);
+          for (var i = 0; i < n; i++) {
+            if (a[i] !== b[i]) {
+              throw new Error("pack head differs from origin \u2014 build changed mid-download");
+            }
+          }
+          slog("integrity", "head witness OK (first 64 KB match origin)");
+        });
+      });
+    });
+  }
+
   function fetchChunk(url, begin, end, tries) {
     return fetch(url, {
       headers: { "Range": "bytes=" + begin + "-" + (end - 1) },
@@ -322,8 +349,14 @@ const GODOT_THREADS_ENABLED = false;
      memory stays at a few MB. Stage 2 is the ENGINE's stock loader: it
      fetches same-origin "index.pck", the service worker assembles the
      response from the cached chunks (site-sw.js), and the engine runs
-     exactly the code path it was built for. */
-  function downloadPack(onProgress) {
+     exactly the code path it was built for.
+     attempts guards the integrity witness: CI can deploy a new pack while
+     chunks are still downloading (sizes differ by only ~600 bytes, so range
+     length checks pass and a mixed-generation set slips through \u2014 Godot
+     then rejects the corrupted file table). On a head mismatch we purge and
+     re-download once against the then-current origin. */
+  function downloadPack(onProgress, attempts) {
+    attempts = attempts || 0;
     /* ?cb busts Fastly: GitHub Pages' CDN serves cached HEADs for ~10 min
        after a push, and a stale size would replay an outdated pack against
        a freshly revalidated engine — the "loads then no project data" trap. */
@@ -387,7 +420,25 @@ const GODOT_THREADS_ENABLED = false;
           return Promise.all(workers).then(function () {
             slog("chunks done", "all " + chunks + " cached (size " + size + ")");
             onProgress(size, size);
-            return size;
+            return verifyHead(size).then(function () {
+              return size;
+            }, function (bad) {
+              // build changed mid-download: purge this size's chunks and try
+              // once more against the then-current origin
+              if (attempts >= 1) throw bad;
+              slog("integrity", "FAILED (" + bad.message + ") \u2014 re-downloading");
+              return openCache().then(function (c) {
+                if (!c) throw bad;
+                return c.keys().then(function (keys) {
+                  var doomed = keys.filter(function (k) {
+                    return k.url.indexOf(CDN_BASE + "?s=" + size + "&c=") === 0;
+                  });
+                  return Promise.all(doomed.map(function (k) { return c.delete(k); }));
+                });
+              }).then(function () {
+                return downloadPack(onProgress, attempts + 1);
+              });
+            });
           });
         });
       })
