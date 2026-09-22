@@ -1,0 +1,9 @@
+# Normalize EOL for all files that Git considers text files.
+* text=auto eol=lf
+
+# Git LFS ONLY for the files over GitHub's hard 100 MB push limit.
+# (Tracking every texture in LFS would blow the free 1 GB LFS quota.)
+# If a new asset ever grows past 100 MB, add its exact path here.
+imports/warrior_of_the_north.glb filter=lfs diff=lfs merge=lfs -text
+imports/viking_warrior.glb filter=lfs diff=lfs merge=lfs -text
+warrior_of_the_north.glb filter=lfs diff=lfs merge=lfs -text

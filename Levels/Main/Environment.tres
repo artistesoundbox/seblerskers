@@ -1,0 +1,37 @@
+[gd_resource type="Environment" format=3 uid="uid://dh2mnl0r3rr44"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
+sky_top_color = Color(0.180392, 0.243137, 0.45098, 1)
+sky_horizon_color = Color(0.909804, 0.6, 0.368627, 1)
+sky_curve = 0.24
+ground_bottom_color = Color(0.101961, 0.109804, 0.145098, 1)
+ground_horizon_color = Color(0.858824, 0.533333, 0.329412, 1)
+sun_angle_max = 40.0
+sun_curve = 0.14
+energy_multiplier = 0.92
+
+[sub_resource type="Sky" id="5"]
+sky_material = SubResource("ProceduralSkyMaterial_1")
+
+[resource]
+background_mode = 2
+sky = SubResource("5")
+tonemap_mode = 2
+tonemap_white = 6.0
+glow_enabled = true
+glow_intensity = 0.9
+glow_strength = 1.04
+glow_bloom = 0.12
+glow_hdr_threshold = 0.9
+fog_enabled = true
+fog_light_color = Color(0.862745, 0.592157, 0.415686, 1)
+fog_sun_scatter = 0.34
+# Ground mist: the height layer hugs the terrain (dense at your feet,
+# gone by ~6 m up) so flying or climbing reads as rising above the
+# haze; the global distance fog is kept faint so far shores only
+# slightly soften. At dusk the mist tints amber so the low sun scatters
+# through it instead of cutting a cold grey band across the warm sky.
+fog_density = 0.00028
+fog_sky_affect = 0.1
+fog_height = 1.2
+fog_height_density = 0.5

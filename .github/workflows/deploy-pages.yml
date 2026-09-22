@@ -1,0 +1,73 @@
+name: Deploy web build to GitHub Pages
+
+# Every push to main: build SEBLERSKERS for the web and publish it at
+# https://<user>.github.io/<repo>/ — no manual uploads, ever.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with LFS assets)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install Godot editor + export templates
+        run: |
+          set -e
+          V="${GODOT_VERSION}-stable"
+          BASE="https://github.com/godotengine/godot/releases/download/${V}"
+          curl -sSfL -o godot.zip "${BASE}/Godot_v${V}_linux.x86_64.zip"
+          unzip -q godot.zip
+          install -m 755 Godot_v${V}_linux.x86_64 /usr/local/bin/godot
+          curl -sSfL -o templates.tpz "${BASE}/Godot_v${V}_export_templates.tpz"
+          mkdir -p ~/.local/share/godot/export_templates
+          unzip -q templates.tpz -d ~/.local/share/godot/export_templates
+          mv ~/.local/share/godot/export_templates/templates \
+             ~/.local/share/godot/export_templates/${V}
+
+      - name: Import project resources
+        run: godot --headless --path . --import
+
+      - name: Export web build
+        run: |
+          mkdir -p build/web
+          godot --headless --path . --export-release "Web" build/web/index.html
+
+      - name: Stamp the landing page (real loader config)
+        run: python3 tools/splice_page.py
+
+      - name: Remove Godot import sidecars from the output
+        run: rm -f build/web/*.import build/web/.gdignore
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

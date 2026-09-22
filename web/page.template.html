@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0908">
+<title>SEBLERSKERS — a viking island saga</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #0a0908; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center;
+         font-family: Georgia, 'Times New Roman', serif; color: #f1eee6; }
+  #frame { position: relative; width: 100vw; height: 100vh; }
+  #canvas { position: absolute; inset: 0; width: 100%; height: 100%;
+            display: block; background: #000; outline: none; touch-action: none; }
+  #veil { position: absolute; inset: 0; background: #0a0908; z-index: 5;
+          display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 18px; text-align: center; padding: 16px; }
+  #veil h1 { font-size: clamp(28px, 6vw, 54px); letter-spacing: 6px;
+             color: #d8c07a; text-shadow: 0 2px 12px #000; font-weight: normal; }
+  #veil .tag { font-style: italic; opacity: .75; font-size: clamp(13px, 2.5vw, 18px); }
+  #start-btn { margin-top: 10px; font: inherit; font-size: clamp(16px, 3.4vw, 24px);
+               color: #f1eee6; background: #2a241c; border: 2px solid #b8964f;
+               border-radius: 40px; padding: 14px 44px; cursor: pointer; }
+  #start-btn:hover { background: #3a3126; }
+  #progress-wrap { width: min(70vw, 420px); height: 10px; border: 1px solid #6a5a38;
+                   border-radius: 6px; overflow: hidden; display: none; }
+  #progress { height: 100%; width: 0%; background: linear-gradient(90deg, #8a6d2f, #d8c07a); }
+  #status { font-size: 14px; opacity: .8; min-height: 18px; }
+  #note { margin-top: 14px; font-size: clamp(11px, 2.2vw, 14px); opacity: .6;
+          max-width: min(90vw, 640px); line-height: 1.5; }
+  #rotate-hint { display: none; position: fixed; inset: 0; z-index: 999;
+                 background: #0a0908; color: #f1eee6; align-items: center;
+                 justify-content: center; text-align: center; padding: 24px;
+                 font-size: 18px; line-height: 1.6; }
+  @media (orientation: portrait) and (pointer: coarse) { #rotate-hint { display: flex; } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="rotate-hint">&#10227; Rotate your phone &mdash;<br>SEBLERSKERS plays in landscape</div>
+<div id="frame">
+  <canvas id="canvas"></canvas>
+  <div id="veil">
+    <h1>SEBLERSKERS</h1>
+    <div class="tag">a viking island saga</div>
+    <button id="start-btn">&#9876; Set sail</button>
+    <div id="progress-wrap"><div id="progress"></div></div>
+    <div id="status">arming the longship&hellip;</div>
+    <div id="note">
+      Keyboard: WASD move &middot; mouse look &middot; Space jump &middot; click attack &middot;
+      Tab/Q scroll &middot; Esc pause<br>
+      Touch: left-thumb joystick &middot; right-thumb look &middot; on-screen buttons
+      (a controller works too)<br>
+      Board the longship with Space/JUMP, swap seats with C/SEAT.
+    </div>
+  </div>
+</div>
+<script src="./index.js"></script>
+<script>
+(function () {
+  "use strict";
+  var veil = document.getElementById("veil");
+  var status = document.getElementById("status");
+  var wrap = document.getElementById("progress-wrap");
+  var bar = document.getElementById("progress");
+  var btn = document.getElementById("start-btn");
+  GODOT_CONFIG["canvas"] = document.getElementById("canvas");
+  GODOT_CONFIG["onProgress"] = function (cur, total) {
+    if (total > 0) {
+      wrap.style.display = "block";
+      bar.style.width = Math.round(100 * cur / total) + "%";
+      status.textContent = "loading\u2026 " + Math.round(100 * cur / total) + "%";
+    } else {
+      status.textContent = "loading\u2026 " + cur + " kb";
+    }
+  };
+  var engine = new Engine(GODOT_CONFIG);
+  function fail(err) {
+    status.textContent = "This browser can't run the saga (" + err + "). " +
+      "Try Chrome/Edge/Firefox on desktop, or Safari 15+ / Chrome on Android.";
+  }
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    btn.classList.add("hidden");
+    engine.startGame().then(function () {
+      veil.classList.add("hidden");
+    }).catch(fail);
+  });
+})();
+</script>
+</body>
+</html>

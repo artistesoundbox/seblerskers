@@ -1,0 +1,40 @@
+[gd_scene format=3 uid="uid://cuq3fa45ghr8r"]
+
+[ext_resource type="PackedScene" uid="uid://bw1k4dqn7m3ts" path="res://Player/Player.tscn" id="1"]
+[ext_resource type="Environment" uid="uid://dh2mnl0r3rr44" path="res://Levels/Main/Environment.tres" id="3"]
+[ext_resource type="Script" uid="uid://drc8v3ukwjnft" path="res://Levels/Main/L_Main.gd" id="4"]
+[ext_resource type="PackedScene" uid="uid://bthiruw8yg23s" path="res://3d_open_world_multi_biome_landscape_terrain_v1.1.glb" id="6_ucjps"]
+[ext_resource type="Script" uid="uid://ug2fx41ivhel" path="res://Player/TerrainWorld.gd" id="7_terr"]
+[ext_resource type="Script" uid="uid://jym4fs8ndb46" path="res://Player/PropScatter.gd" id="8_props"]
+[ext_resource type="Script" path="res://Player/DayNight.gd" id="9_daynight"]
+
+[node name="L_Main" type="Node3D" unique_id=50707530]
+script = ExtResource("4")
+
+[node name="Player" parent="." unique_id=446801060 instance=ExtResource("1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+
+[node name="Lighting" type="Node" parent="." unique_id=1498960024]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="Lighting" unique_id=835518902]
+environment = ExtResource("3")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="Lighting" unique_id=1553603813]
+transform = Transform3D(-0.12096, -0.970258, 0.209503, 0.866026, 0, 0.5, -0.48515, 0.24192, 0.84028, 0, 5, 0)
+shadow_enabled = true
+light_color = Color(1, 0.62, 0.32, 1)
+light_energy = 1.15
+light_indirect_energy = 1.2
+shadow_bias = 0.05
+directional_shadow_max_distance = 3000.0
+
+[node name="DayNight" type="Node3D" parent="Lighting"]
+script = ExtResource("9_daynight")
+
+[node name="3d_open_world_multi_biome_landscape_terrain_v1_1" parent="." unique_id=1257916636 instance=ExtResource("6_ucjps")]
+transform = Transform3D(3, 0, 0, 0, 3, 0, 0, 0, 3, 43.756326, -19.866159, -120.76359)
+script = ExtResource("7_terr")
+verbose = true
+
+[node name="PropScatter" type="Node3D" parent="." unique_id=504175833]
+script = ExtResource("8_props")
