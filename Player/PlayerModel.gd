@@ -109,12 +109,15 @@ const LEG_BONE_SUFFIXES: Array[String] = ["UpLeg", "Leg", "Foot", "ToeBase"]
 @export var fly_bank_ref_rate := 3.0
 ## Forward body lean while flying, degrees — a flying bird tips its
 ## whole body into the direction of travel instead of standing upright.
-@export var fly_forward_lean_deg := 14.0
+## Raised from the old 14 ("lean him more forward when hes flying") so
+## cruise reads as committed flight, not an upright hover.
+@export var fly_forward_lean_deg := 24.0
 ## Extra forward lean per m/s of dive-glide energy bank, so a fast
 ## swoop leans visibly harder than a lazy cruise.
 @export var fly_lean_per_energy := 0.7
 ## Cap for the total forward lean (lean + energy bonus), degrees.
-@export var fly_forward_lean_max := 35.0
+## Raised with the base lean so a charged swoop still clears the cap.
+@export var fly_forward_lean_max := 48.0
 ## How fast the flight attitude eases (1/s).
 @export var fly_attitude_smooth := 5.0
 ## --- Flight lean & flap pulse (bird-like takeoff) -----------------------
@@ -1392,12 +1395,28 @@ func play_attack() -> bool:
 	return true
 
 
+## Stops a playing attack without waiting for the clip (mid-flight
+## throws are canceled when flight ends — touchdown, sea entry,
+## boarding — so the throw never latches into another state's pose).
+## A swing canceled before its strike moment never casts.
+func cancel_attack() -> void:
+	if not _attacking:
+		return
+	_attacking = false
+	_attack_cast_fired = true
+
+
 func _on_animation_finished(finished: StringName) -> void:
 	match finished:
 		ANIM_ATTACK:
 			_attacking = false
 			attack_finished.emit()
-			play_idle()
+			# A throw that started in flight hands back to the fly clip;
+			# grounded swings return to the land idle.
+			if _flying:
+				play_fly(1.0, false)
+			else:
+				play_idle()
 		ANIM_JUMP:
 			# Jump clip ended while still airborne: hold the last pose until landing.
 			anim.pause()

@@ -14,6 +14,12 @@ D-pad UP/DOWN toggles the elder's scroll · Y (hold) tiller eyes · Start pause.
 (The D-pad no longer zooms the camera — it used to strand players in
 first person.)
 
+**In flight (F / R3):** the attack key alternates air strikes — one press
+dive-bombs, the next slings a fireball mid-flight along the camera aim,
+then repeat. Pressing it during a dive pulls out without spending the
+throw. The body now leans deeper into cruise (and harder still on a
+dive-energy swoop).
+
 **Touch (phone/tablet browsers):** on-screen joystick lower-left (start a
 drag high on the screen to also pitch the camera), drag anywhere on the
 right half to look, and buttons: JUMP · ATK · RUN (tap to latch) · SEAT ·

@@ -127,6 +127,7 @@ func _check_void() -> void:
 	dive_energy = 0.0
 	sprint_boost = 1.0
 	_end_dive_local()
+	model.cancel_attack()
 	model.stop_flying()
 	_respawn_timer = respawn_freeze
 	if body_node != null:
@@ -191,6 +192,7 @@ func serpent_bite(from: Vector3) -> void:
 		dive_energy = 0.0
 		sprint_boost = 1.0
 		_end_dive_local()
+		model.cancel_attack()
 		model.stop_flying()
 		_respawn_timer = respawn_freeze
 		if body_node != null:
@@ -342,6 +344,10 @@ var _prev_yaw := 0.0
 var _spawn_transform := Transform3D.IDENTITY
 ## True while a dive-bomb strike is in progress.
 var diving := false
+## Alternate-fire bookkeeping: the attack key while flying alternates
+## between a dive-bomb and a mid-flight fireball throw. True while the
+## NEXT flying attack press should sling a fireball instead of diving.
+var _fly_attack_is_throw := false
 ## --- Sailing (the flagship longship) ---
 ## True while aboard: the hull owns this body (deck-anchored).
 var sailing := false
@@ -448,7 +454,12 @@ func _on_attack_cast() -> void:
 		return
 	var dir: Vector3 = -head.cam.global_transform.basis.z
 	var inherit := Vector3(velocity.x, 0.0, velocity.z) * 0.25
-	fireball_cast.call("cast", model.get_cast_origin(), dir, inherit)
+	# Mid-flight throws launch from the chest: the wing-beat pose swings
+	# the hand behind/below the body, which flung the ball backwards.
+	var origin: Vector3 = model.get_cast_origin()
+	if flying:
+		origin = global_position + Vector3(0.0, 1.2, 0.0)
+	fireball_cast.call("cast", origin, dir, inherit)
 
 
 ## Current ground speed cap (Sprint.gd raises it while sprinting).
@@ -574,6 +585,8 @@ func _physics_process(delta: float) -> void:
 		wing_flapping = false
 		dive_energy = 0.0
 		sprint_boost = 1.0
+		_end_dive_local()
+		model.cancel_attack()
 		model.stop_flying()
 		model.sit_pose(false, 0.0, 0.0)
 		_respawn_timer = respawn_freeze
@@ -633,13 +646,23 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_fly"):
 		_toggle_fly()
 
-	# Dive-bomb: attack while flying starts a dive; attacking again
-	# mid-dive pulls out of it (wings snap back open, flight continues).
+	# Attack while flying ALTERNATES between the two air strikes: one
+	# press dive-bombs, the next (once the dive is over) slings a
+	# fireball mid-flight along the camera aim, then the cycle repeats.
+	# Pressing it mid-dive pulls out of the dive (wings snap back open,
+	# flight continues) WITHOUT spending the throw slot — dive, pull
+	# out, and the next press throws. The flag flips only when a strike
+	# actually starts, so a refused press (a swing already owning the
+	# pose) never desyncs the cycle.
 	if flying and Input.is_action_just_pressed("attack") and can_attack():
 		if diving:
 			_end_dive_local()
+		elif _fly_attack_is_throw:
+			if _fly_throw():
+				_fly_attack_is_throw = false  # next press dives again
 		else:
 			_start_dive()
+			_fly_attack_is_throw = true  # next press throws
 
 	direction_input()
 
@@ -692,6 +715,7 @@ func _physics_process(delta: float) -> void:
 			wing_flapping = false
 			dive_energy = 0.0
 			model.stop_flying()
+			_fly_attack_is_throw = false
 		var grade: float = maxf(_fall_peak, _fall_air_time * 4.0)
 		grade = maxf(grade, _fall_peak_height * (1.8 if _fall_from_flight
 				else 1.2))
@@ -809,6 +833,7 @@ func _sail_try_board() -> void:
 	if best != null:
 		if diving:
 			_end_dive_local()
+		model.cancel_attack()
 		best.call("board", self)
 
 
@@ -862,17 +887,21 @@ func _toggle_fly() -> void:
 	if diving:
 		# Toggling out of flight cancels an active dive.
 		_end_dive_local()
+	# A swing caught mid-throw dies with the flight (see cancel_attack).
+	model.cancel_attack()
 	flying = not flying
 	if flying:
 		crouching = false
 		model.stop_crouch()
 		wing_flapping = false
+		_fly_attack_is_throw = false  # fresh flight opens with the dive
 		model.play_fly()
 		# A little wing-beat to get airborne.
 		velocity.y = jump_height * 0.6
 	else:
 		# Landing/toggle-off spends the whole bank.
 		dive_energy = 0.0
+		_fly_attack_is_throw = false
 		model.stop_flying()
 
 
@@ -960,6 +989,21 @@ func _dive_physics(delta: float) -> void:
 			dive_accel * delta)
 
 
+## Mid-flight fireball: plays the attack swing in the air and lets the
+## normal strike-moment pipeline sling it (same cast, same camera aim
+## as a ground swing). Returns false when the model refuses (a swing or
+## dive already owns the pose) — the alternation flag then stays put so
+## the next press still gets the throw.
+func _fly_throw() -> bool:
+	if not model.play_attack():
+		return false
+	# Face the camera direction instantly, like a ground swing.
+	rotation.y = head.rot.y
+	head.sync_body_yaw(rotation.y)
+	attacked.emit()
+	return true
+
+
 ## Starts the dive-bomb strike. Only meaningful while flying.
 func _start_dive() -> void:
 	if not model.start_dive():
@@ -1011,9 +1055,12 @@ func _update_model(delta: float) -> void:
 	if flying:
 		# Bird-like attitude: vertical speed pitches the body, yaw rate
 		# banks it into the turn (the dive overrides both in the model).
+		# The throw swing rides the flight attitude instead of standing
+		# the body upright mid-air.
 		model.set_flight_attitude(velocity.y, yaw_rate)
 		# While diving, the dive clip owns the character (and the body yaw
-		# is frozen at the strike direction).
+		# is frozen at the strike direction). During a mid-flight throw,
+		# the swing clip owns the pose but yaw stays steerable.
 		if not model.is_attacking() and not model.is_diving():
 			var move_dir := Vector3(velocity.x, 0.0, velocity.z)
 			if move_dir.length() > 0.5:
