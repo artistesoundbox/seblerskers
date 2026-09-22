@@ -53,7 +53,7 @@ jobs:
           godot --headless --path . --export-release "Web" build/web/index.html
 
       - name: Stamp the landing page (real loader config)
-        run: python3 Tools/splice_page.py
+        run: python3 tools/splice_page.py
 
       - name: Remove Godot import sidecars from the output
         run: rm -f build/web/*.import build/web/.gdignore
