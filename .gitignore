@@ -28,3 +28,6 @@ game/
 /index.audio.worklet.js
 /index.audio.position.worklet.js
 /libterrain.web.release.wasm32.wasm
+/site-sw.js
+/site-shell-cover.jpg
+/site-shell-cover-small.jpg
