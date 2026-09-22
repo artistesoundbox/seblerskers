@@ -17,3 +17,14 @@ godot-FirstPersonStarter-c9f77c321f63d37ad2d6067107c9c930aa1fae18/
 
 # Local web-export copies (the Pages workflow rebuilds these; never commit them)
 game/
+
+# Portal-port shell files: this folder doubles as the vitahuesosite
+# checkout's seblerskers/ folder, so the site's tracked engine shell
+# lands here too. It lives in the vitahuesosite repo, never in this one.
+/index.html
+/index.js
+/index.wasm
+/index.side.wasm
+/index.audio.worklet.js
+/index.audio.position.worklet.js
+/libterrain.web.release.wasm32.wasm
