@@ -93,9 +93,12 @@ self.addEventListener("fetch", function (event) {
 
 async function networkFirst(req) {
   try {
-    const fresh = await fetch(req);
+    // no-store: the shell must ALWAYS reflect the origin — a stale HTTP-cached
+    // copy (or cached 404 from a build window) is precisely the "error keeps
+    // popping up" class of failure
+    const fresh = await fetch(req, { cache: "no-store" });
     const cache = await caches.open(CACHE);
-    try { cache.put(req, fresh.clone()); } catch (e) { /* quota */ }
+    if (fresh.ok) { try { cache.put(req, fresh.clone()); } catch (e) { /* quota */ } }
     return fresh;
   } catch (e) {
     const cached = await caches.match(req);
