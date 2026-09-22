@@ -11,7 +11,7 @@
   body { display: flex; align-items: center; justify-content: center;
          font-family: Georgia, 'Times New Roman', serif; color: #f1eee6; }
   #frame { position: relative; width: 100vw; height: 100vh; }
-  #bg { position: absolute; inset: 0; z-index: 0; background: #0a0908 center / cover no-repeat; }
+  #bg { position: absolute; inset: 0; z-index: 1; background: #0a0908 center / cover no-repeat; }
   #bg::after { content: ""; position: absolute; inset: 0;
                background: linear-gradient(180deg, rgba(10,9,8,.30) 0%, rgba(10,9,8,.55) 55%, rgba(10,9,8,.82) 100%); }
   #canvas { position: absolute; inset: 0; width: 100%; height: 100%;
@@ -198,15 +198,15 @@ const GODOT_THREADS_ENABLED = false;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
     downloadPack(setBar).then(function (pack) {
+      var begun = function () { veil.classList.add("hidden");
+        document.getElementById("bg").classList.add("hidden"); };
       if (pack) {
         return engine.startGame({ mainPack: pack })
-          .then(function () { veil.classList.add("hidden"); })
-          .catch(fail);
+          .then(begun, fail);
       }
       // CDN refused ranges (unlikely): stream whole-pack as before
       return engine.startGame({ mainPack: PACK_URL })
-        .then(function () { veil.classList.add("hidden"); })
-        .catch(fail);
+        .then(begun, fail);
     }).catch(fail);
   });
 })();
