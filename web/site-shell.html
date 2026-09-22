@@ -279,9 +279,16 @@ const GODOT_THREADS_ENABLED = false;
   }
 
   /* cache-key helpers: chunk URLs embed the pack's total size, so a new
-     build (new size) can never be stitched from stale chunks */
+     build (new size) can never be stitched from stale chunks. &r=1 is a
+     key REVISION: keys without it are pruned as junk, which retires any
+     set cached before a fetch-integrity fix (range fetches used to be
+     answerable from Fastly's edge copy of an OLDER pack — a complete-looking
+     set stitched from mixed generations, which Godot rejects at setup with
+     "Couldn't load project data"). The FETCH url additionally carries a
+     per-request &cb= timestamp (see cacheChunk) so every range always comes
+     from the origin's current object; the cache key stays stable. */
   function chunkKey(size, idx) {
-    return CDN_BASE + "?s=" + size + "&c=" + idx;
+    return CDN_BASE + "?s=" + size + "&c=" + idx + "&r=1";
   }
   var packCache = null;
   function openCache() {
@@ -296,7 +303,7 @@ const GODOT_THREADS_ENABLED = false;
         var junk = [];
         var prefix = CDN_BASE + "?s=";
         keys.forEach(function (k) {
-          var m = k.url.match(/^[^?]*\?s=(\d+)&c=(\d+)$/);
+          var m = k.url.match(/^[^?]*\?s=(\d+)&c=(\d+)&r=(\d+)$/);
           if (k.url.indexOf(prefix) === 0 && m && Number(m[1]) === size) {
             have.push(Number(m[2]));   // the CHUNK INDEX, not the size
           } else {
@@ -357,9 +364,14 @@ const GODOT_THREADS_ENABLED = false;
           function cacheChunk(idx) {
             var begin = idx * CHUNK;
             var end = Math.min(size, (idx + 1) * CHUNK);
-            return fetchChunk(chunkKey(size, idx), begin, end, 3).then(function (buf) {
+            var key = chunkKey(size, idx);
+            /* &cb busts the CDN edge for THIS range: without it a just-pushed
+               pack can serve ranges sliced from an older edge-cached object,
+               silently mixing generations inside one "complete" set. */
+            var fetchUrl = CDN_BASE + "?s=" + size + "&c=" + idx + "&cb=" + Date.now();
+            return fetchChunk(fetchUrl, begin, end, 3).then(function (buf) {
               return openCache().then(function (c) {
-                if (c) try { c.put(chunkKey(size, idx), new Response(buf)); } catch (e) { }
+                if (c) try { c.put(key, new Response(buf)); } catch (e) { }
                 doneCount++;
                 onProgress(Math.min(doneCount * CHUNK, size), size);
               });

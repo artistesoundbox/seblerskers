@@ -61,6 +61,10 @@ self.addEventListener("fetch", function (event) {
 
   const url = new URL(req.url);
 
+  // cache-buster URLs (?cb=) always go straight to the network — they exist
+  // precisely to dodge the edge cache, and must never be cached themselves
+  if (url.searchParams.has("cb")) return;
+
   // HTML shell: network-first so shell updates land immediately
   if (req.mode === "navigate" ||
       (url.origin === self.location.origin &&
@@ -162,7 +166,7 @@ const PACK_ORIGIN = "https://artistesoundbox.github.io";
 const CHUNK_SIZE = 8 * 1024 * 1024;
 
 function packUrl(size, idx) {
-  return PACK_ORIGIN + "/seblerskers/index.pck?s=" + size + "&c=" + idx;
+  return PACK_ORIGIN + "/seblerskers/index.pck?s=" + size + "&c=" + idx + "&r=1";
 }
 
 async function servePack(req) {
@@ -172,7 +176,7 @@ async function servePack(req) {
   // sizes cached, and we must serve whichever set is COMPLETE
   const bySize = {};
   keys.forEach(function (k) {
-    const m = k.url.match(/\?s=(\d+)&c=(\d+)$/);
+    const m = k.url.match(/\?s=(\d+)&c=(\d+)&r=(\d+)$/);
     if (!m) return;
     const s = Number(m[1]);
     (bySize[s] = bySize[s] || {})[Number(m[2])] = true;
