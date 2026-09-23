@@ -48,6 +48,11 @@
              color: #d8c07a; background: rgba(10,9,8,.75); border: 1px solid #6a5a38;
              border-radius: 14px; padding: 6px 12px; cursor: pointer; opacity: .7; }
   #gp-chip:hover { opacity: 1; }
+  #perf-chip { position: fixed; right: 10px; bottom: 44px; z-index: 1200;
+               font: 11px/1.2 Consolas, monospace; letter-spacing: .08em;
+               color: #a8c8a0; background: rgba(10,9,8,.75); border: 1px solid #4a6a48;
+               border-radius: 14px; padding: 6px 12px; cursor: pointer; opacity: .7; }
+  #perf-chip:hover { opacity: 1; }
   #gp-panel { position: fixed; left: 10px; right: 10px; bottom: 44px; z-index: 1200;
               display: none; width: auto; max-width: 430px; max-height: 62vh;
               overflow-y: auto; overflow-wrap: anywhere;
@@ -102,6 +107,7 @@
     </div>
   </div>
 </div>
+<button id="perf-chip" type="button" title="Toggle resolution: FAST renders at 1x pixel density, PRETTY at up to 1.5x">FAST &middot; &hellip;</button>
 <button id="gp-chip" type="button">GAMEPAD: 0</button>
 <div id="gp-panel">
   <h3>GAMEPAD DIAGNOSTICS</h3>
@@ -247,6 +253,48 @@ const GODOT_THREADS_ENABLED = false;
     }
   };
 
+  /* --- resolution / performance -------------------------------------
+     WebGL fill rate is the top frame cost on hi-dpi screens (a DPR-3
+     phone renders 9x the pixels it needs). Cap the DPR the engine sees
+     BEFORE init: FAST (default) = 1x pixels, PRETTY = up to 1.5x. The
+     chip toggles live and doubles as an fps readout. */
+  var canvasEl = document.getElementById("canvas");
+  var perfChip = document.getElementById("perf-chip");
+  var nativeDpr = window.devicePixelRatio || 1;
+  var dprCap = 1.0, pretty = false;
+  try {
+    Object.defineProperty(window, "devicePixelRatio", {
+      get: function () { return Math.min(nativeDpr, dprCap); },
+      configurable: true,
+    });
+  } catch (e) { /* very old browser: just runs at native density */ }
+  function applyDpr() {
+    var w = Math.round(canvasEl.clientWidth * dprCap);
+    var h = Math.round(canvasEl.clientHeight * dprCap);
+    if (w > 0 && h > 0) {
+      canvasEl.width = w;
+      canvasEl.height = h;
+      try { window.dispatchEvent(new Event("resize")); } catch (e) { }
+    }
+  }
+  perfChip.addEventListener("click", function () {
+    pretty = !pretty;
+    dprCap = pretty ? Math.min(1.5, nativeDpr) : 1.0;
+    applyDpr();
+  });
+  (function fpsLoop() {
+    var frames = 0, t0 = performance.now();
+    function tick(t) {
+      frames++;
+      if (t - t0 >= 1000) {
+        var rate = Math.round(frames * 1000 / (t - t0));
+        frames = 0; t0 = t;
+        perfChip.textContent = (pretty ? "PRETTY" : "FAST") + " \u00b7 " + rate + " fps";
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  })();
   var engine = new Engine(GODOT_CONFIG);
   /* cover art: big screen gets the 1920px version, small a 61 KB one */
   document.getElementById("bg").style.backgroundImage =
@@ -717,6 +765,7 @@ const GODOT_THREADS_ENABLED = false;
       left.toFixed(1) + '%;width:' + pct.toFixed(1) + '%"></span></span>' +
       (v >= 0 ? "+" : "") + v.toFixed(2);
   }
+  var lastCount = -1, lastPaint = 0;
   function render() {
     var pads = navigator.getGamepads ? navigator.getGamepads() : [];
     var n = 0, html = "";
@@ -745,8 +794,16 @@ const GODOT_THREADS_ENABLED = false;
       html = '<div class="none">No gamepads detected. Press any button on the ' +
         'controller \u2014 browsers only reveal a pad after a press.</div>';
     }
-    body.innerHTML = html;
-    chip.textContent = "GAMEPAD: " + n;
+    /* repaint only when the panel is open (max ~2 fps) or the pad count
+       changed — an every-frame innerHTML rebuild was measurable overhead
+       during play */
+    var countChanged = n !== lastCount;
+    lastCount = n;
+    if (countChanged) chip.textContent = "GAMEPAD: " + n;
+    if (panel.classList.contains("open") && performance.now() - lastPaint > 500) {
+      body.innerHTML = html;
+      lastPaint = performance.now();
+    }
     requestAnimationFrame(render);
   }
   requestAnimationFrame(render);
