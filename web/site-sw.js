@@ -21,7 +21,7 @@
  */
 
 const CACHE = "seb-pack-v1";
-const VERSION = "2026-09-22.2"; // engine-set purge on activate + pinned revalidate
+const VERSION = "2026-09-23.1"; // pull-based pack stream (mobile OOM fix) + engine purge + pinned revalidate
 
 /* this folder's engine files */
 const ENGINE = /\/seblerskers\/(index\.js|index\.wasm|index\.side\.wasm|index\.audio\.worklet\.js|index\.audio\.position\.worklet\.js|libterrain\.web\.release\.wasm32\.wasm|site-shell-cover(-small)?\.jpg)$/;
@@ -216,18 +216,19 @@ async function servePack(req) {
     return fetch(cdn, { mode: "cors", cache: "no-store" });
   }
 
+  /* pull()-based flow control: the consumer (the engine's loader) asks for
+     the next chunk only when it actually wants one, so at most ~1 chunk
+     (8 MB) sits in the stream queue. The previous start()-drain pushed all
+     68 chunks (~565 MB) into the queue regardless of read pace — fine on a
+     16 GB desktop, an OOM kill on phones ("loads forever then crashes").
+     The spec serializes pull() calls, so no chunk can be skipped or doubled. */
+  let next = 0;
   const stream = new ReadableStream({
-    async start(controller) {
-      try {
-        for (let i = 0; i < chunks; i++) {
-          const resp = await cache.match(packUrl(size, i));
-          if (!resp) throw new Error("chunk " + i + " vanished mid-stream");
-          controller.enqueue(new Uint8Array(await resp.arrayBuffer()));
-        }
-        controller.close();
-      } catch (e) {
-        controller.error(e);
-      }
+    async pull(controller) {
+      if (next >= chunks) { controller.close(); return; }
+      const resp = await cache.match(packUrl(size, next++));
+      if (!resp) { controller.error(new Error("chunk " + (next - 1) + " vanished mid-stream")); return; }
+      controller.enqueue(new Uint8Array(await resp.arrayBuffer()));
     },
   });
   return new Response(stream, {

@@ -251,10 +251,67 @@ const GODOT_THREADS_ENABLED = false;
   /* cover art: big screen gets the 1920px version, small a 61 KB one */
   document.getElementById("bg").style.backgroundImage =
     'url("./' + ((window.innerWidth < 900) ? "site-shell-cover-small.jpg" : "site-shell-cover.jpg") + '")';
+  /* Godot prints this exact error (via console.error) when the pack it was
+     handed is incomplete/corrupt \u2014 the signature of a partial CDN publish.
+     Its main() then exits "successfully", so no promise ever rejects and the
+     old failure mode was a silent black screen. Intercept, purge the suspect
+     chunks, say so honestly, and auto-retry once after the CDN settles. */
+  var _origError = console.error;
+  var _brokenRetried = false;
+  console.error = function () {
+    try {
+      var joined = Array.prototype.join.call(arguments, " ");
+      if (joined.indexOf("Couldn't load project data") >= 0 && !_brokenRetried) {
+        if (sessionStorage.getItem("seb-broken-retry")) {
+          /* one auto-retry per tab is enough \u2014 beyond that, be honest and
+             let the human decide (avoids a purge/re-download loop while the
+             CDN converges) */
+          console.info("[shell] setup rejected the build AGAIN \u2014 CDN still " +
+            "publishing; not auto-retrying further");
+          wrap.style.display = "block";
+          bar.style.width = "0%";
+          status.textContent = "the CDN is still publishing an incomplete " +
+            "build. Wait about two minutes, then refresh the page \u2014 this is " +
+            "on our side, not your browser.";
+          _brokenRetried = true;
+          return _origError.apply(console, arguments);
+        }
+        _brokenRetried = true;
+        console.info("[shell] setup rejected the delivered build \u2014 CDN likely " +
+          "mid-publish; purging its chunks and auto-retrying once");
+        setTimeout(function () {
+          var m = window.__sebLastPackSize;
+          var done = function () {
+            sessionStorage.setItem("seb-broken-retry", "1");
+            wrap.style.display = "block";
+            bar.style.width = "0%";
+            status.textContent = "the CDN was still publishing an incomplete " +
+              "build \u2014 cleared it, retrying in 30 seconds\u2026";
+            setTimeout(function () { location.reload(); }, 30000);
+          };
+          if (!m) { done(); return; }
+          openCache().then(function (c) {
+            if (!c) return;
+            return c.keys().then(function (keys) {
+              var doomed = keys.filter(function (k) {
+                return k.url.indexOf(CDN_BASE + "?s=" + m + "&c=") === 0;
+              });
+              return Promise.all(doomed.map(function (k) { return c.delete(k); }));
+            });
+          }).then(done, done);
+        }, 1500);
+      }
+    } catch (e) { /* never break the page's own logging */ }
+    return _origError.apply(console, arguments);
+  };
+
   function fail(err) {
     slog("FAIL", err && (err.stack || err.message) || String(err));
-    status.textContent = "This browser can't run the saga (" + err + "). " +
-      "Try Chrome/Edge/Firefox on desktop, or Safari 15+ / Chrome on Android.";
+    /* honest wording: loader/CDN problems are ours, not the browser's —
+       the old "this browser can't run the saga" text blamed the wrong party */
+    status.textContent = "Something went wrong loading the saga \u2014 not your " +
+      "browser's fault. Press Set sail to try again, or refresh the page. " +
+      "Details: " + err;
   }
 
   function setBar(cur, total) {
@@ -366,16 +423,95 @@ const GODOT_THREADS_ENABLED = false;
      length checks pass and a mixed-generation set slips through \u2014 Godot
      then rejects the corrupted file table). On a head mismatch we purge and
      re-download once against the then-current origin. */
+  /* Stage 1 begins with a SIZE PROBE. GitHub Pages' HEAD answers can be
+     STALE — an old deploy's header (short by ~36 MB) keeps being served
+     after a new publish, while ranged GETs return the object that is
+     actually stored (Content-Range "total" is authoritative). So the probe
+     is a 64-byte ranged GET, GDPC-magic-checked, repeated until two
+     samples agree. Cache-busted (?cb) so no layer can replay an old read. */
+  function trueSizeOnce() {
+    return fetch(CDN_BASE + "?cb=" + Date.now(), {
+      headers: { Range: "bytes=0-63" }, cache: "no-store"
+    }).then(function (r) {
+      var total = Number((r.headers.get("Content-Range") || "").split("/")[1]);
+      if (!r.ok || !total) {
+        throw new Error("the CDN refused a range request — cannot size the pack");
+      }
+      return r.arrayBuffer().then(function (buf) {
+        if (new TextDecoder().decode(buf.slice(0, 4)) !== "GDPC") {
+          throw new Error("the CDN object is not a Godot pack — refusing to load it");
+        }
+        return { size: total, ok: true, ranges: "bytes" };
+      });
+    });
+  }
+  function stableHead(round) {
+    return trueSizeOnce().then(function (first) {
+      return new Promise(function (res) { setTimeout(res, 1500); })
+        .then(trueSizeOnce).then(function (second) {
+          if (second.size === first.size && second.size > 0) {
+            slog("HEAD", "size=" + second.size + " ranges=" + second.ranges +
+              " (ranged-GET probe, samples: " + first.size + "/" +
+              second.size + ")");
+            return second;
+          }
+          if (round >= 3) {
+            throw new Error("the CDN is still publishing the latest build " +
+              "(sizes seen: " + first.size + "/" + second.size +
+              ") \u2014 give it a minute and press Set sail again");
+          }
+          slog("HEAD", "unstable (" + first.size + "/" + second.size +
+            ") \u2014 rechecking");
+          status.textContent = "the CDN is still publishing \u2014 rechecking\u2026";
+          return new Promise(function (res) { setTimeout(res, 8000); })
+            .then(function () { return stableHead(round + 1); });
+        });
+    });
+  }
+
+  /* Second gate: the PCK header declares the directory-table offset
+     (Godot writes the table AFTER all data). Beyond the arithmetic check,
+     we RANGE-FETCH the catalog itself — if that 64-byte read answers 206
+     with the full total, the complete object (not a stale partial
+     replica) is what the CDN will serve for every chunk. */
+  function probeTable(size) {
+    return fetch(CDN_BASE + "?cb=" + Date.now(), {
+      headers: { Range: "bytes=0-39" }, cache: "no-store"
+    }).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+      if (buf.byteLength < 40) throw new Error("pack header read short");
+      var tableOff = Number(new DataView(buf).getBigUint64(32, true));
+      if (!(tableOff > 100 && tableOff + 16 <= size)) {
+        throw new Error("the pack header is inconsistent (catalog at byte " +
+          tableOff + " vs size " + size + ") \u2014 try again in a minute");
+      }
+      return fetch(CDN_BASE + "?cb=" + Date.now(), {
+        headers: { Range: "bytes=" + tableOff + "-" + (tableOff + 63) },
+        cache: "no-store"
+      }).then(function (r) {
+        var total = Number((r.headers.get("Content-Range") || "").split("/")[1]);
+        if (r.status !== 206 || total !== size) {
+          throw new Error("the CDN is serving a partial pack (catalog " +
+            "unreadable at byte " + tableOff + ") \u2014 try again in a minute");
+        }
+        slog("table", "catalog reachable at byte " + tableOff +
+          " \u2014 full object confirmed (size " + size + ")");
+      });
+    });
+  }
+
   function downloadPack(onProgress, attempts) {
     attempts = attempts || 0;
-    /* ?cb busts Fastly: GitHub Pages' CDN serves cached HEADs for ~10 min
-       after a push, and a stale size would replay an outdated pack against
-       a freshly revalidated engine — the "loads then no project data" trap. */
-    return fetch(CDN_BASE + "?cb=" + Date.now(), { method: "HEAD", cache: "no-store" })
+    return stableHead(0)
       .then(function (head) {
-        var size = Number(head.headers.get("Content-Length"));
-        slog("HEAD", "size=" + size + " ranges=" + head.headers.get("Accept-Ranges") + " status=" + head.status);
-        if (!head.ok || !size || head.headers.get("Accept-Ranges") !== "bytes") {
+        return probeTable(head.size).then(function () { return head; });
+      })
+      .then(function (head) {
+        return storageGate(head.size * 1.1).then(function () { return head; });
+      })
+      .then(function (head) {
+        var size = head.size;
+        window.__sebLastPackSize = size;
+        if (!head.ok || !size || head.ranges !== "bytes") {
           return -1; // no chunked path: engine loads the CDN URL directly
         }
         var chunks = Math.ceil(size / CHUNK);
@@ -400,6 +536,7 @@ const GODOT_THREADS_ENABLED = false;
           }
           var next = 0;
           var claimedAll = false;
+          var saved = 0, saveFail = 0;   // honest cache-write accounting
           function claim() {            // -1 once every chunk is taken
             if (claimedAll || next >= chunks) { claimedAll = true; return -1; }
             return next++;
@@ -415,7 +552,17 @@ const GODOT_THREADS_ENABLED = false;
             var fetchUrl = CDN_BASE + "?s=" + size + "&c=" + idx + "&cb=" + Date.now();
             return fetchChunk(fetchUrl, begin, end, 3).then(function (buf) {
               return openCache().then(function (c) {
-                if (c) try { c.put(key, new Response(buf)); } catch (e) { }
+                if (c) {
+                  /* AWAIT the put: a failed write (quota, private mode)
+                     must fail this chunk — silently swallowed rejections
+                     used to make a full-looking cache that was empty. */
+                  return c.put(key, new Response(buf)).catch(function (e) {
+                    saveFail++; slog("cache put failed", "chunk " + idx +
+                    ": " + (e && e.message || e));
+                  });
+                }
+              }).then(function () {
+                saved++;
                 doneCount++;
                 onProgress(Math.min(doneCount * CHUNK, size), size);
               });
@@ -429,6 +576,15 @@ const GODOT_THREADS_ENABLED = false;
           }
           for (var w = 0; w < workers.length; w++) workers[w] = run();
           return Promise.all(workers).then(function () {
+            if (saveFail > 0 && saveFail >= saved) {
+              throw new Error("this device refused to store the pack (" +
+                saveFail + " of " + chunks + " parts failed to save) \u2014 " +
+                "free up space (or leave Private browsing) and try again");
+            }
+            if (saveFail > 0) {
+              slog("warning", saveFail + " parts failed to save \u2014 they will " +
+                "re-download next visit");
+            }
             slog("chunks done", "all " + chunks + " cached (size " + size + ")");
             onProgress(size, size);
             return verifyHead(size).then(function () {
@@ -461,10 +617,45 @@ const GODOT_THREADS_ENABLED = false;
       });
   }
 
+  /* Persistent storage: without it the browser may evict the ~565 MB pack
+     cache under disk pressure (and iOS Safari wipes site data after 7 days
+     of non-use) — "retains nothing". Requesting inside the click gesture is
+     when browsers actually grant it. Must not block the boot on failure. */
+  function askPersistence() {
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().then(function (granted) {
+          slog("storage", granted ? "persistent \u2014 cache will survive" :
+            "best-effort \u2014 the browser MAY evict the cache under disk pressure");
+        }).catch(function () { });
+      }
+    } catch (e) { /* old browsers: best-effort anyway */ }
+  }
+  /* Storage gate: a phone with less free space than the pack needs would
+     crawl through a doomed download and die at the end. Fail fast, honestly. */
+  function storageGate(needBytes) {
+    if (!navigator.storage || !navigator.storage.estimate) return Promise.resolve();
+    return navigator.storage.estimate().then(function (est) {
+      var free = (est.quota || 0) - (est.usage || 0);
+      if (free < needBytes) {
+        throw new Error("this device is low on storage \u2014 the saga needs about " +
+          Math.ceil(needBytes / 1048576) + " MB free (found ~" +
+          Math.max(0, Math.round(free / 1048576)) + " MB available). " +
+          "Clear some space and press Set sail again.");
+      }
+      slog("storage", "quota OK (" + Math.round(free / 1048576) + " MB free of need " +
+        Math.ceil(needBytes / 1048576) + " MB)");
+    }).catch(function (err) {
+      /* estimate() unsupported/failed is fine; a real gate failure is not */
+      if (err instanceof Error && err.message.indexOf("storage") !== -1) throw err;
+    });
+  }
+
   btn.addEventListener("click", function () {
     btn.disabled = true;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
+    askPersistence();
     downloadPack(setBar).then(function (size) {
       slog("downloadPack resolved", size);
       status.textContent = "raising the sails \u2014 starting the engine\u2026";
