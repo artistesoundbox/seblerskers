@@ -34,13 +34,19 @@
                  justify-content: center; text-align: center; padding: 24px;
                  font-size: 18px; line-height: 1.6; }
   @media (orientation: portrait) and (pointer: coarse) { #rotate-hint { display: flex; } }
+  #perf-chip { position: fixed; top: 10px; right: 10px; z-index: 50;
+               font: 12px/1.4 Georgia, serif; letter-spacing: 1px;
+               color: #d8c07a; background: rgba(20, 16, 10, 0.7);
+               border: 1px solid #6a5a38; border-radius: 999px;
+               padding: 4px 12px; cursor: pointer; opacity: 0.85; }
+  #perf-chip:hover { opacity: 1; }
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<div id="rotate-hint">&#10227; Rotate your phone &mdash;<br>SEBLERSKERS plays in landscape</div>
-<div id="frame">
-  <canvas id="canvas"></canvas>
+<div id="rotate-hint">&#10227; Rotate your phone &mdash;<br>SEBLERSKERS plays in landscape</div>  <button id="perf-chip" title="Toggle FAST / PRETTY rendering">FAST</button>
+  <div id="frame">
+    <canvas id="canvas"></canvas>
   <div id="veil">
     <h1>SEBLERSKERS</h1>
     <div class="tag">a viking island saga</div>
@@ -60,6 +66,54 @@
 <script>
 (function () {
   "use strict";
+  /* --- resolution / performance --------------------------------------
+     WebGL fill rate is the top frame cost on hi-dpi screens (a DPR-2
+     monitor renders 4x the pixels, a DPR-3 phone 9x). Cap the DPR the
+     engine sees BEFORE it initializes: FAST (default) = 1x pixels,
+     PRETTY = up to 1.5x. The chip toggles live and doubles as an fps
+     readout. Dynamic resolution scaling then trims or restores the
+     render target based on the measured frame rate. */
+  var canvasEl = document.getElementById("canvas");
+  var perfChip = document.getElementById("perf-chip");
+  var nativeDpr = window.devicePixelRatio || 1;
+  var dprCap = 1.0, pretty = false, dynScale = 1.0;
+  try {
+    Object.defineProperty(window, "devicePixelRatio", {
+      get: function () { return Math.min(nativeDpr, dprCap * dynScale); },
+      configurable: true,
+    });
+  } catch (e) { /* very old browser: just runs at native density */ }
+  function applyDpr() {
+    try { window.dispatchEvent(new Event("resize")); } catch (e) {}
+  }
+  perfChip.addEventListener("click", function () {
+    pretty = !pretty;
+    dprCap = pretty ? Math.min(1.5, nativeDpr) : 1.0;
+    dynScale = 1.0; /* a manual tier choice restarts DRS from full res */
+    perfChip.textContent = pretty ? "PRETTY" : "FAST";
+    applyDpr();
+  });
+  var frames = 0, fpsLast = 60, drsAt = 0;
+  function fpsLoop(ts) {
+    frames++;
+    if (!fpsLoop.t0) fpsLoop.t0 = ts;
+    if (ts - fpsLoop.t0 >= 1000) {
+      fpsLast = Math.round(frames * 1000 / (ts - fpsLoop.t0));
+      frames = 0; fpsLoop.t0 = ts;
+      perfChip.textContent = (pretty ? "PRETTY" : "FAST") + " " + fpsLast + " fps";
+      if (ts - drsAt > 2000 && !document.hidden) {
+        drsAt = ts;
+        if (fpsLast < 30 && dynScale > 0.5) {
+          dynScale = Math.max(0.5, dynScale * 0.85); applyDpr();
+        } else if (fpsLast > 55 && dynScale < 1.0) {
+          dynScale = Math.min(1.0, dynScale * 1.10); applyDpr();
+        }
+      }
+    }
+    requestAnimationFrame(fpsLoop);
+  }
+  requestAnimationFrame(fpsLoop);
+
   var veil = document.getElementById("veil");
   var status = document.getElementById("status");
   var wrap = document.getElementById("progress-wrap");
@@ -69,8 +123,12 @@
   GODOT_CONFIG["onProgress"] = function (cur, total) {
     if (total > 0) {
       wrap.style.display = "block";
-      bar.style.width = Math.round(100 * cur / total) + "%";
-      status.textContent = "loading\u2026 " + Math.round(100 * cur / total) + "%";
+      var pct = Math.round(100 * cur / total);
+      bar.style.width = pct + "%";
+      status.textContent = pct < 100
+        ? "loading\u2026 " + pct + "%"
+        : "downloaded \u2014 building the island\u2026";
+      if (pct >= 100) startSettle();
     } else {
       status.textContent = "loading\u2026 " + cur + " kb";
     }
@@ -80,12 +138,42 @@
     status.textContent = "This browser can't run the saga (" + err + "). " +
       "Try Chrome/Edge/Firefox on desktop, or Safari 15+ / Chrome on Android.";
   }
+  // After the bar hits 100% Godot still compiles wasm and builds the
+  // island, which can take a while — say so instead of looking frozen.
+  var SETTLE_MSGS = [
+    "raising the island\u2026",
+    "waking the village\u2026",
+    "sharpening axes\u2026",
+    "unfurling the sails\u2026",
+    "almost there\u2026",
+  ];
+  var settleTimer = 0, settleIdx = 0;
+  function startSettle() {
+    if (settleTimer) return;
+    settleTimer = setInterval(function () {
+      settleIdx = Math.min(settleIdx + 1, SETTLE_MSGS.length - 1);
+      status.textContent = SETTLE_MSGS[settleIdx];
+    }, 6000);
+    status.textContent = SETTLE_MSGS[0];
+  }
+  function stopSettle() {
+    if (settleTimer) { clearInterval(settleTimer); settleTimer = 0; }
+  }
+  // Keep the saga on the device: the service worker caches the big
+  // files so later visits don't re-download half a gigabyte. Needs a
+  // secure context (https or localhost); harmless no-op anywhere else.
+  var secure = location.protocol === "https:" ||
+    location.hostname === "localhost" || location.hostname === "127.0.0.1";
+  if (secure && "serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(function () {});
+  }
   btn.addEventListener("click", function () {
     btn.disabled = true;
     btn.classList.add("hidden");
     engine.startGame().then(function () {
+      stopSettle();
       veil.classList.add("hidden");
-    }).catch(fail);
+    }).catch(function (err) { stopSettle(); fail(err); });
   });
 })();
 </script>
