@@ -193,7 +193,8 @@ const GODOT_THREADS_ENABLED = false;
      events the input actions are bound to:
        menus:   d-pad / stick -> arrows, A/Start -> Enter, B/Back -> Esc
        playing: stick -> WASD, A -> jump, X/RB or LT -> attack, RT -> sprint,
-                B -> crouch, LB -> quest scroll, Y -> camera, Start -> pause
+                B -> crouch, Back -> quest scroll (Select, per the game's
+                hint text), Y -> camera, Start -> pause
                 right stick -> mouse-look
      Desired-state semantics: every frame collects the set of keys the pad
      wants held, then diffs against what is actually held. Two buttons
@@ -272,11 +273,14 @@ const GODOT_THREADS_ENABLED = false;
       if (!pad) continue;
       anyPad = true;
       for (var b = 0; b < pad.buttons.length; b++) {
-        if (running && (b === 1 || b === 4 || b === 5)) {
-          continue; /* B/LB/RB re-bound for gameplay below */
+        if (running && (b === 0 || b === 1 || b === 4 || b === 5)) {
+          continue; /* A/B/LB/RB re-bound for gameplay below */
         }
         var codeB = PAD_MAP[b];
-        if (running && b === 9) codeB = "Escape"; /* Start opens pause */
+        if (running && b === 9) codeB = "Escape";  /* Start opens pause */
+        if (running && b === 8) codeB = "KeyQ";    /* Back reads the scroll
+          (the game's own hint: "Tab / Q / Select / D-pad") — LB sat right
+          under the index finger and every flap-tap toggled the scroll */
         if (codeB && pad.buttons[b].pressed) want[codeB] = codeB;
       }
       if (pad.axes.length >= 2) {
@@ -295,7 +299,6 @@ const GODOT_THREADS_ENABLED = false;
       if (pad.buttons[0] && pad.buttons[0].pressed) want.Space = " ";
       if (pad.buttons[1] && pad.buttons[1].pressed) want.KeyC = "c";
       if (pad.buttons[3] && pad.buttons[3].pressed) want.KeyV = "v";
-      if (pad.buttons[4] && pad.buttons[4].pressed) want.KeyQ = "q"; /* LB scroll */
       if ((pad.buttons[7] && pad.buttons[7].pressed) || pad.axes[5] > 0.5)
         want.ShiftLeft = "Shift";
       if ((pad.buttons[2] && pad.buttons[2].pressed) ||
