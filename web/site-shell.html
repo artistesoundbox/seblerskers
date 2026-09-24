@@ -301,9 +301,13 @@ const GODOT_THREADS_ENABLED = false;
        stick down (engine keeps a released key's action "held" otherwise) */
     if (hadPad && !anyPad) releaseAllPadKeys();
     hadPad = anyPad;
-    requestAnimationFrame(pollPads);
   }
-  requestAnimationFrame(pollPads);
+  /* Sampled on a timer, not rAF: when the game crawls at 5-15 fps the
+     rAF stream barely ticks and pad presses were dropped or lagged
+     seconds behind — the pad felt dead exactly when the game was
+     slowest. A steady 125 Hz timer keeps input sampling independent of
+     frame rate (cheap: reads state, diffs a few keys). */
+  setInterval(pollPads, 8);
 
   /* pack-cache service worker: registers quietly; not required to play */
   if ("serviceWorker" in navigator) {
