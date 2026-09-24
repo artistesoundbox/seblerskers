@@ -831,16 +831,39 @@ const GODOT_THREADS_ENABLED = false;
     });
   }
 
+  /* Boot-crash-loop detector: phones can OOM-kill the tab while the engine
+     buffers the 565 MB pack into RAM (Godot web loads the whole pck into
+     heap). The tab reloads to this start screen — chunks all cached, so it
+     looks like it "loaded fine" — and the player can loop forever. Detect
+     reloads shortly after a sail click and say so honestly instead. */
+  var sailAt = Number(sessionStorage.getItem("seb-sail-at") || 0);
+  if (sailAt && Date.now() - sailAt < 45000) {
+    var crashes = Number(sessionStorage.getItem("seb-boot-crashes") || 0) + 1;
+    sessionStorage.setItem("seb-boot-crashes", String(crashes));
+    if (crashes >= 2) {
+      status.innerHTML = "the game keeps running out of memory while starting " +
+        "on this device — a browser tab can't hold the full 565 MB world. " +
+        "A smaller phone edition is planned; on a computer it runs today. " +
+        "You can still press Set sail to try again.";
+      slog("boot-loop", crashes + " consecutive boot crashes detected");
+    }
+  } else {
+    sessionStorage.removeItem("seb-boot-crashes");
+  }
+
   btn.addEventListener("click", function () {
     btn.disabled = true;
     btn.classList.add("hidden");
     status.textContent = "hoisting the sails\u2026";
+    sessionStorage.setItem("seb-sail-at", String(Date.now()));
     askPersistence();
     downloadPack(setBar).then(function (size) {
       slog("downloadPack resolved", size);
       status.textContent = "raising the sails \u2014 starting the engine\u2026";
       var begun = function () {
         slog("engine started");
+        sessionStorage.removeItem("seb-sail-at");       /* boot survived */
+        sessionStorage.removeItem("seb-boot-crashes");
         veil.classList.add("hidden");
         document.getElementById("bg").classList.add("hidden");
       };
