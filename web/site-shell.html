@@ -199,10 +199,23 @@ const GODOT_THREADS_ENABLED = false;
      wants held, then diffs against what is actually held. Two buttons
      sharing a key (Start and Back both -> Esc) merge instead of fighting
      over one state bit — the key releases only when BOTH release. */
+  /* Godot's web glue reads the LEGACY event.keyCode (0 on synthetic
+     KeyboardEvents — the constructor refuses to set it), so without these
+     the engine sees "unknown key" and drops every bridge key. Verified
+     live: Escape with keyCode 27 works, without it silently ignored. */
+  var KEY_CODES = { Enter: 13, Escape: 27, ArrowLeft: 37, ArrowUp: 38,
+    ArrowRight: 39, ArrowDown: 40, KeyW: 87, KeyA: 65, KeyS: 83,
+    KeyD: 68, Space: 32, KeyC: 67, KeyV: 86, KeyQ: 81, ShiftLeft: 16 };
   function padKeyEvent(type, key, code) {
     var canvas = GODOT_CONFIG["canvas"];
-    canvas.dispatchEvent(new KeyboardEvent(type, { key: key, code: code,
-      bubbles: true, cancelable: true }));
+    var ev = new KeyboardEvent(type, { key: key, code: code,
+      bubbles: true, cancelable: true });
+    var kc = KEY_CODES[code];
+    if (kc) {
+      Object.defineProperty(ev, "keyCode", { value: kc });
+      Object.defineProperty(ev, "which", { value: kc });
+    }
+    canvas.dispatchEvent(ev);
   }
   function padKeyDown(code, key) {
     padKeyEvent("keydown", key || code, code);
@@ -238,9 +251,13 @@ const GODOT_THREADS_ENABLED = false;
        until the stick pulls it back */
     lookX = Math.max(r.left + 8, Math.min(r.right - 8, lookX + dx));
     lookY = Math.max(r.top + 8, Math.min(r.bottom - 8, lookY + dy));
-    canvas.dispatchEvent(new MouseEvent("mousemove", { clientX: lookX,
-      clientY: lookY, movementX: dx, movementY: dy,
-      bubbles: true, cancelable: true }));
+    var ev = new MouseEvent("mousemove", { clientX: lookX, clientY: lookY,
+      bubbles: true, cancelable: true });
+    /* movementX/Y are not MouseEventInit members (always 0 on synthetic
+       events) — the engine's mouse-look reads them, so define them */
+    Object.defineProperty(ev, "movementX", { value: dx });
+    Object.defineProperty(ev, "movementY", { value: dy });
+    canvas.dispatchEvent(ev);
   }
   var hadPad = false;
   function pollPads() {
