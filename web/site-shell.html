@@ -390,7 +390,7 @@ const GODOT_THREADS_ENABLED = false;
           if (sinceAdjust >= 2) {
             sinceAdjust = 0;
             var ns = dynScale;
-            if (rate < 30 && ns > 0.5) ns = Math.max(0.5, ns - 0.15);
+            if (rate < 30 && ns > 0.35) ns = Math.max(0.35, ns - 0.15);
             else if (rate > 55 && ns < 1.0) ns = Math.min(1.0, ns + 0.1);
             if (ns !== dynScale) {
               dynScale = ns;
