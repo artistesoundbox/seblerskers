@@ -3,21 +3,16 @@
 .godot/
 .freebuff/
 export.cfg
-
 # Export output
 build/
-
 # Imported translations (automatically generated from CSV files)
 *.translation
-
 # Mono-specific ignores
 .mono/
 data_*/
 godot-FirstPersonStarter-c9f77c321f63d37ad2d6067107c9c930aa1fae18/
-
 # Local web-export copies (the Pages workflow rebuilds these; never commit them)
 game/
-
 # Portal-port shell files: this folder doubles as the vitahuesosite
 # checkout's seblerskers/ folder, so the site's tracked engine shell
 # lands here too. It lives in the vitahuesosite repo, never in this one.
@@ -31,3 +26,7 @@ game/
 /site-sw.js
 /site-shell-cover.jpg
 /site-shell-cover-small.jpg
+# Stale one-off cover draft sitting at the repo root (referenced nowhere;
+# the real cover is imports/seblerskersgamepagecover.jpg).
+/seblerskersgamepagecover.jpg
+

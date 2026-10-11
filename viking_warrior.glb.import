@@ -3,7 +3,7 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://b2i7eu0nlp1jj"
+uid="uid://db2comtnuovmy"
 path="res://.godot/imported/viking_warrior.glb-c5953da3e2de0476e9a9ba1896a79823.scn"
 
 [deps]
@@ -24,8 +24,8 @@ nodes/import_as_skeleton_bones=false
 nodes/use_name_suffixes=true
 nodes/use_node_type_suffixes=true
 meshes/ensure_tangents=true
-meshes/generate_lods=false
-meshes/create_shadow_meshes=false
+meshes/generate_lods=true
+meshes/create_shadow_meshes=true
 meshes/light_baking=1
 meshes/lightmap_texel_size=0.2
 meshes/force_disable_compression=false
@@ -35,7 +35,7 @@ animation/fps=30
 animation/trimming=false
 animation/remove_immutable_tracks=true
 animation/import_rest_as_RESET=false
-import_script/path="res://Tools/warrior_diet_import.gd"
+import_script/path=""
 materials/extract=0
 materials/extract_format=0
 materials/extract_path=""
