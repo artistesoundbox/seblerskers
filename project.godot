@@ -21,6 +21,22 @@ config/icon="res://cover_icon.png"
 
 doppler/use_pitch_scale=true
 
+[display]
+
+## UI scaling: the HUD and menus are laid out on a fixed 1920x1080
+## 'canvas_items' stage and stretched to whatever window they land in.
+## Without this (the old default: stretch DISABLED) every Control
+## sized itself in raw canvas pixels — so when the web shell caps the
+## render resolution (DPR cap / dynamic res), the same pixel-size HUD
+## filled more of the physically-smaller canvas and read as GIGANTIC
+## on the title screen (user screenshots).  With canvas_items the UI
+## keeps the same visual proportion at any resolution; 3D rendering
+## is unaffected (the viewport still gets the full window size).
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+
 [autoload]
 
 Boot="*res://Player/Boot.gd"
