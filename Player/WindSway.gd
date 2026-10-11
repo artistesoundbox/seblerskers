@@ -40,7 +40,7 @@ class_name WindSway
 ## score each frame from this pool. Sized for the full island (~300
 ## plants at the current tree line) — each animated trunk is a couple
 ## of vector lerps, so the true ceiling is far away.
-@export var max_animated := 600
+@export var max_animated := 280
 
 ## One registered tree: node, world position, top height, per-tree
 ## phase offsets and current lean (for smoothing).

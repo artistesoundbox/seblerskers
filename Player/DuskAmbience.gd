@@ -9,7 +9,7 @@ extends Node3D
 
 ## Crickets chirping per spot (kept modest: 3D voices are cheap but
 ## not free, and 20 spots already fills a meadow with song).
-const CRICKET_VOICES_PER := 2
+const CRICKET_VOICES_PER := 1
 ## Bird-voice ceiling (each spot gets one player).
 const BIRD_VOICE_CAP := 8
 ## How often a cricket re-triggers its chirp phrase (s, random band).

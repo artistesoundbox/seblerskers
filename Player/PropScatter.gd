@@ -61,7 +61,7 @@ const GROVE_FALLOFF := 1.3
 ## how big each patch is, and how close together their saplings
 ## crowd. Thickets are separate from the five big groves: they dress
 ## the meadows with small copse-like clumps of young trees.
-const THICKET_COUNT := 24
+const THICKET_COUNT := 14
 const THICKET_RADIUS := 6.5
 const THICKET_MIN_GAP := 34.0
 ## Sapling models (little tree clusters reuse the big pack at a
@@ -398,16 +398,12 @@ func _rules() -> Array[PropRule]:
 		PropRule.new("res://imports/old_lighthouse.glb", 2, 14.0, 14.0,
 				10.0),
 		# Grove-floor dressing — strictly inside the woods: toadstool
-		# clusters, fallen logs and scattered boulders (real GLBs from
-		# the open-world pack, scaled down hard).
+		# clusters, fallen logs and scattered boulders (built
+		# procedurally — the packed RockA/B/C GLBs under demo/ never
+		# survived the export filter, so the old rules were dead weight).
 		PropRule.new("mushroom_cluster", 7, 0.5, 1.4, 15.0),
 		PropRule.new("fallen_log", 6, 1.0, 2.4, 14.0),
-		PropRule.new("res://demo/assets/models/RockA.glb", 5, 0.55,
-				2.0, 18.0),
-		PropRule.new("res://demo/assets/models/RockB.glb", 4, 0.45,
-				2.0, 18.0),
-		PropRule.new("res://demo/assets/models/RockC.glb", 4, 0.35,
-				2.0, 18.0),
+		PropRule.new("grove_boulder", 12, 0.5, 2.0, 18.0),
 	]
 	# Ships: they float, so they sample the deep-water ring beyond the
 	# island's shore (the terrain is three times bigger now) with
@@ -476,6 +472,7 @@ func _rules() -> Array[PropRule]:
 			r.grove_share = 0.6  # meadows too, not only grove shade
 		elif r.scene_path == "mushroom_cluster" \
 				or r.scene_path == "fallen_log" \
+				or r.scene_path == "grove_boulder" \
 				or r.scene_path.begins_with("res://demo/assets/models/Rock"):
 			r.grove_fill = true
 			r.grove_share = 1.0
@@ -1797,12 +1794,12 @@ func _spawn_butterflies(props_root: Node3D) -> void:
 	var colony := Node3D.new()
 	colony.set_script(BUTTERFLY_SCRIPT)
 	colony.set("colony_seed", seed_value + 4241)
-	colony.setup(heads, 10)
+	colony.setup(heads, 4)
 	props_root.add_child(colony)
 	colony.global_position = Vector3.ZERO
 	if verbose:
 		print("[PropScatter] butterflies: %d on %d patches"
-				% [mini(10, heads.size()), heads.size()])
+				% [mini(4, heads.size()), heads.size()])
 
 
 ## Perches one flock of birds in each grove's canopy: perch points are
@@ -2935,6 +2932,47 @@ func _build_grove_prop(kind: String) -> Node3D:
 		# AABB and grounds on its LOWEST point, so keep the pivot level
 		# with the cylinder's centre.
 		log.position.y = 0.0
+	elif kind == "grove_boulder":
+		# A mossy granite boulder: 2-3 overlapping stone spheres,
+		# flattened, with a green moss cap on the top one. Cheap
+		# primitives — the grove floors lost their rock dressing when
+		# the demo-pack GLBs failed to export.
+		var stone := StandardMaterial3D.new()
+		stone.albedo_color = Color(0.42, 0.42, 0.44).lightened(
+				_rng.randf_range(-0.05, 0.08))
+		stone.roughness = 1.0
+		var moss := StandardMaterial3D.new()
+		moss.albedo_color = Color(0.28, 0.46, 0.22)
+		moss.roughness = 1.0
+		var n := _rng.randi_range(2, 3)
+		var top_done := false
+		for i in n:
+			var blob := MeshInstance3D.new()
+			var bm := SphereMesh.new()
+			var br := _rng.randf_range(0.28, 0.55)
+			bm.radius = br
+			bm.height = br * _rng.randf_range(1.2, 1.7)
+			bm.radial_segments = 9
+			bm.rings = 6
+			blob.mesh = bm
+			blob.material_override = stone
+			blob.position = Vector3(_rng.randf_range(-0.2, 0.2),
+					bm.height * 0.3, _rng.randf_range(-0.2, 0.2))
+			blob.rotation.y = _rng.randf() * TAU
+			root.add_child(blob)
+			if not top_done:
+				var cap := MeshInstance3D.new()
+				var cm := SphereMesh.new()
+				cm.radius = br * 0.8
+				cm.height = br * 0.55
+				cm.radial_segments = 9
+				cm.rings = 5
+				cap.mesh = cm
+				cap.material_override = moss
+				cap.position = blob.position + Vector3(0.0,
+						bm.height * 0.48, 0.0)
+				root.add_child(cap)
+				top_done = true
 	elif kind == "bush_patch":
 		# 3-5 leaf spheres clumped around a woody base.
 		var leaf := Color(0.24, 0.44, 0.18)
